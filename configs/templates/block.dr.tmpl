@@ -1,0 +1,14 @@
+
+# ===== DR / REPLICA (read_only) =====
+# TOPOLOGY = dr / dr-cluster: node nay la replica async, keo binlog tu primary.
+# read_only chan client thuong ghi; replication thread (va wsrep applier voi
+# dr-cluster) van ghi duoc. Sau khi deploy, setup slave thu cong:
+#     CHANGE MASTER TO MASTER_HOST='<primary>', MASTER_USER='replicant', ...,
+#       MASTER_USE_GTID=slave_pos;  START SLAVE;
+read_only = 1
+# MariaDB khong co super_read_only (MySQL-only). Muon chan ca user co SUPER:
+#   thu hoi SUPER tu user app, chi giu cho admin.
+#
+# loose_ prefix: bien nay chi co tu MariaDB 11.4+. Tren 10.6/10.11 server se
+# WARNING roi bo qua thay vi abort (cho phep template dung chung nhieu phien ban).
+loose_slave_connections_needed_for_purge = 0

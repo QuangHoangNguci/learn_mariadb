@@ -1,0 +1,20 @@
+
+# ===== GALERA =====
+wsrep_on            = ON
+wsrep_provider      = __WSREP_PROVIDER__
+wsrep_cluster_name  = "__WSREP_CLUSTER_NAME__"
+wsrep_node_name     = __WSREP_NODE_NAME__
+wsrep_node_address  = __LOCAL_CLUSTER_IP__:__WSREP_LISTEN__
+wsrep_cluster_address = __WSREP_CLUSTER_ADDRESS__
+
+wsrep_provider_options = "cert.log_conflicts=ON;gcache.size=__GCACHE_SIZE__;gmcast.listen_addr=tcp://__LOCAL_CLUSTER_IP__:__WSREP_LISTEN__;ist.recv_addr=__LOCAL_CLUSTER_IP__:__WSREP_IST__"
+
+wsrep_sst_method          = mariabackup
+wsrep_sst_receive_address = __LOCAL_CLUSTER_IP__:__WSREP_SST__
+wsrep_sst_auth            = __GALERA_SST_AUTH__
+wsrep_slave_threads       = __THREAD_POOL__
+wsrep_gtid_mode           = ON
+wsrep_gtid_domain_id      = __WSREP_GTID_DOMAIN_ID__
+
+auto_increment_increment = __AUTO_INC_INCREMENT__
+auto_increment_offset    = __AUTO_INC_OFFSET__

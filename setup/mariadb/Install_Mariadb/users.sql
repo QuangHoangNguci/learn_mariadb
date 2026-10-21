@@ -1,0 +1,146 @@
+-- ========================
+-- USERS & PRIVILEGES (DYNAMIC + SECURE)
+-- ========================
+
+-- ========================
+-- ADMIN USER
+-- ========================
+
+CREATE USER IF NOT EXISTS 'tdht'@'127.0.0.1' IDENTIFIED BY '${ADMIN_PASS}';
+CREATE USER IF NOT EXISTS 'tdht'@'localhost' IDENTIFIED BY '${ADMIN_PASS}';
+CREATE USER IF NOT EXISTS 'tdht'@'10.%' IDENTIFIED BY '${ADMIN_PASS}';
+CREATE USER IF NOT EXISTS 'tdht'@'192.168.%' IDENTIFIED BY '${ADMIN_PASS}';
+
+GRANT ALL PRIVILEGES ON *.* TO 'tdht'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'tdht'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'tdht'@'10.%' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'tdht'@'192.168.%' WITH GRANT OPTION;
+
+-- ========================
+-- MONITOR USER
+-- ========================
+
+CREATE USER IF NOT EXISTS 'monitor'@'127.0.0.1' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'monitor'@'localhost' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'monitor'@'10.%' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'monitor'@'192.168.%' IDENTIFIED BY '${COMMON_PASS}';
+
+GRANT SELECT, PROCESS, SHOW DATABASES, SUPER,
+      BINLOG MONITOR, SHOW VIEW, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'monitor'@'127.0.0.1';
+
+GRANT SELECT, PROCESS, SHOW DATABASES, SUPER,
+      BINLOG MONITOR, SHOW VIEW, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'monitor'@'localhost';
+
+GRANT SELECT, PROCESS, SHOW DATABASES, SUPER,
+      BINLOG MONITOR, SHOW VIEW, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'monitor'@'10.%';
+
+GRANT SELECT, PROCESS, SHOW DATABASES, SUPER,
+      BINLOG MONITOR, SHOW VIEW, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'monitor'@'192.168.%';
+
+-- ========================
+-- GALERA SST USER (ten chung 'galera' cho moi instance)
+-- ========================
+
+CREATE USER IF NOT EXISTS '${GALERA_USER}'@'localhost' IDENTIFIED BY '${GALERA_PASS}';
+
+GRANT RELOAD, PROCESS, SUPER, LOCK TABLES, CREATE TABLESPACE,
+      REPLICATION SLAVE, BINLOG MONITOR
+ON *.* TO '${GALERA_USER}'@'localhost';
+
+-- ========================
+-- MAXSCALE USER (SECURE - NO %)
+-- ========================
+
+CREATE USER IF NOT EXISTS 'maxscale'@'127.0.0.1' IDENTIFIED BY '${MAXSCALE_PASS}';
+CREATE USER IF NOT EXISTS 'maxscale'@'localhost' IDENTIFIED BY '${MAXSCALE_PASS}';
+CREATE USER IF NOT EXISTS 'maxscale'@'10.%' IDENTIFIED BY '${MAXSCALE_PASS}';
+CREATE USER IF NOT EXISTS 'maxscale'@'192.168.%' IDENTIFIED BY '${MAXSCALE_PASS}';
+
+GRANT SELECT ON mysql.* TO 'maxscale'@'127.0.0.1';
+GRANT SELECT ON mysql.* TO 'maxscale'@'localhost';
+GRANT SELECT ON mysql.* TO 'maxscale'@'10.%';
+GRANT SELECT ON mysql.* TO 'maxscale'@'192.168.%';
+
+GRANT SHOW DATABASES, SUPER, BINLOG MONITOR,
+      REPLICATION SLAVE ADMIN, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'maxscale'@'127.0.0.1';
+
+GRANT SHOW DATABASES, SUPER, BINLOG MONITOR,
+      REPLICATION SLAVE ADMIN, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'maxscale'@'localhost';
+
+GRANT SHOW DATABASES, SUPER, BINLOG MONITOR,
+      REPLICATION SLAVE ADMIN, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'maxscale'@'10.%';
+
+GRANT SHOW DATABASES, SUPER, BINLOG MONITOR,
+      REPLICATION SLAVE ADMIN, SLAVE MONITOR, REPLICATION CLIENT
+ON *.* TO 'maxscale'@'192.168.%';
+
+-- ========================
+-- BACKUP USER
+-- ========================
+
+USE mysql;
+
+CREATE OR REPLACE VIEW backup_mysql AS
+SELECT * FROM vsystem.backup_history;
+
+CREATE USER IF NOT EXISTS 'mbackup'@'127.0.0.1' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'mbackup'@'localhost' IDENTIFIED BY '${COMMON_PASS}';
+
+GRANT SELECT, RELOAD, PROCESS, LOCK TABLES,
+      BINLOG MONITOR, SLAVE MONITOR, REPLICA MONITOR
+ON *.* TO 'mbackup'@'127.0.0.1';
+
+GRANT SELECT, RELOAD, PROCESS, LOCK TABLES,
+      BINLOG MONITOR, SLAVE MONITOR, REPLICA MONITOR
+ON *.* TO 'mbackup'@'localhost';
+
+GRANT INSERT ON vsystem.backup_history TO 'mbackup'@'127.0.0.1';
+GRANT INSERT ON vsystem.backup_history TO 'mbackup'@'localhost';
+
+GRANT EXECUTE ON vsystem.* TO 'mbackup'@'127.0.0.1';
+GRANT EXECUTE ON vsystem.* TO 'mbackup'@'localhost';
+
+-- ========================
+-- EXPORTER USER
+-- ========================
+
+CREATE USER IF NOT EXISTS 'mysqlexp'@'127.0.0.1' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'mysqlexp'@'localhost' IDENTIFIED BY '${COMMON_PASS}';
+
+GRANT SELECT, PROCESS, BINLOG MONITOR, SLAVE MONITOR
+ON *.* TO 'mysqlexp'@'127.0.0.1';
+
+GRANT SELECT, PROCESS, BINLOG MONITOR, SLAVE MONITOR
+ON *.* TO 'mysqlexp'@'localhost';
+
+GRANT SELECT ON mysql.backup_mysql TO 'mysqlexp'@'127.0.0.1';
+GRANT SELECT ON mysql.backup_mysql TO 'mysqlexp'@'localhost';
+
+GRANT EXECUTE ON FUNCTION vsystem.convert_date TO 'mysqlexp'@'127.0.0.1';
+GRANT EXECUTE ON FUNCTION vsystem.replace_azn TO 'mysqlexp'@'127.0.0.1';
+
+GRANT EXECUTE ON FUNCTION vsystem.convert_date TO 'mysqlexp'@'localhost';
+GRANT EXECUTE ON FUNCTION vsystem.replace_azn TO 'mysqlexp'@'localhost';
+
+-- ========================
+-- AUTO PARTITION USER
+-- ========================
+
+CREATE USER IF NOT EXISTS 'auto_add_partition'@'127.0.0.1' IDENTIFIED BY '${COMMON_PASS}';
+CREATE USER IF NOT EXISTS 'auto_add_partition'@'localhost' IDENTIFIED BY '${COMMON_PASS}';
+
+GRANT SELECT, EXECUTE ON vsystem.* TO 'auto_add_partition'@'127.0.0.1';
+GRANT SELECT, EXECUTE ON vsystem.* TO 'auto_add_partition'@'localhost';
+
+-- ========================
+-- FINAL
+-- ========================
+
+FLUSH PRIVILEGES;

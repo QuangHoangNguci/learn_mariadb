@@ -1,0 +1,169 @@
+---
+data_dir: /log/apps/vector-check-points
+sources:
+  mariadb_slow_log_file:
+    include:
+      - /log/mysql_log/mysqld.slow.log
+      - /log/mysql/mysqld.slow.log
+      - /logs/mysql_log/mysqld.slow.log
+      - /logs/mysql/mysqld.slow.log
+      - /var/log/mariadb-*.slow.log
+      - /u01/log/mysql/mysqld.slow.log
+      - /log/mariadb/mariadb.slow.log
+    type: file
+    read_from: beginning
+    ignore_older_secs: 600
+    ignore_not_found: true
+    fingerprint:
+      strategy: checksum
+      ignored_header_bytes: 5
+      lines: 20
+    multiline:
+      start_pattern: '^\#\sUser'
+      condition_pattern: '^(\#\sTime|\#\sUser)'
+      mode: halt_before
+      timeout_ms: 1000
+
+  mariadb_error_log_file:
+    include:
+      - /log/mysql_log/mysqld.error.log
+      - /log/mysql/mysqld.error.log
+      - /u01/log/mysql/mysqld.error.log
+      - /log/mariadb/mariadb.error.log
+    type: file
+    read_from: beginning
+    ignore_older_secs: 600
+    ignore_not_found: true
+    fingerprint:
+      strategy: checksum
+      ignored_header_bytes: 5
+      lines: 20
+    multiline:
+      start_pattern: '^\d{4}\-\d{2}\-\d{2}'
+      condition_pattern: '^\d{4}\-\d{2}\-\d{2}'
+      mode: halt_before
+      timeout_ms: 1000
+
+  mariadb_innodb_log_file:
+    include:
+      - /log/mysql_log/innodb_stat.log
+      - /log/mysql/innodb_stat.log
+      - /log/mariadb/innodb_stat.log
+    type: file
+    read_from: beginning
+    ignore_older_secs: 600
+    ignore_not_found: true
+    fingerprint:
+      strategy: checksum
+      ignored_header_bytes: 5
+      lines: 20
+    multiline:
+      start_pattern: '^TIME\s\d{4}\-\d{2}\-\d{2}'
+      condition_pattern: '^END\sOF\sINNODB\sMONITOR\sOUTPUT'
+      mode: halt_before
+      timeout_ms: 1000
+
+  vector_internal_metrics:
+    type: internal_metrics
+    scrape_interval_secs: 30
+
+transforms:
+  mariadb_slow_log_transform:
+    type: remap
+    inputs:
+      - mariadb_slow_log_file
+    drop_on_error: true
+    source: |-
+
+      . |= parse_regex!(.message, r'(?sm)^\#\sUser@Host:\s(?P<client>.*)\n\#\sThread_id:\s(?P<thread_id>\d+)\s+Schema:(?P<schema>.*)\sQC_hit:\s(?P<qc_hit>[a-zA-Z]*)\n\#\sQuery_time:\s(?P<query_time>[0-9\.]*)\s+Lock_time:\s(?P<lock_time>[0-9\.]*)\s+Rows_sent:\s(?P<rows_sent>\d+)\s+Rows_examined:\s(?P<rows_examined>\d+)\n#\sRows_affected:\s(?P<rows_affected>\d+)\s+Bytes_sent:\s(?P<byte_sent>\d+)\nSET\stimestamp=(?P<timestamp>\d+);\n(?P<command>.*);$') 
+
+      .query_time = to_float!(.query_time)
+
+      .lock_time = to_float!(.lock_time)
+
+      .rows_sent = to_int!(.rows_sent)
+
+      .rows_examined = to_int!(.rows_examined)
+
+      .rows_affected = to_int!(.rows_affected)
+
+      .byte_sent = to_int!(.byte_sent)
+
+      del(.message)
+
+      .@timestamp = parse_timestamp(.timestamp, format: "%s") ?? now()
+
+      .server ="10.211.87.1"
+
+  mariadb_error_log_transform:
+    type: remap
+    inputs:
+      - mariadb_error_log_file
+    drop_on_error: true
+    source: |-
+
+      . |= parse_regex!(.message, r'(?sm)^(?P<time_log>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(?P<thread>\d+)\s+\[(?P<label>\w+)\]\s+(?P<message>.*)$')
+
+      .thread = to_int!(.thread)   
+
+      .@timestamp = parse_timestamp(.time_log, format: "%Y-%m-%d %H:%M:%S") ?? now()
+
+      del(.time_log)
+
+      .server ="10.211.87.1"
+
+  mariadb_innodb_log_transform:
+    type: remap
+    inputs:
+      - mariadb_innodb_log_file
+    drop_on_error: true
+    source: |-
+      . |= parse_regex!(.message, r'(?m)^TIME\s(?P<time_log>\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\nSERVER\s(?P<server>.*)\n.*\n.*\n.*\n.*\n.*\n.*\n.*\n.*\n.*\n+BACKGROUND\s+THREAD\n.*\n(?P<information>[\s\S]*),$')
+
+      .timestamp = parse_timestamp(.time_log, format: "%Y-%m-%d %H:%M:%S") ?? now()
+
+      .@timestamp = del(.timestamp)
+
+      del(.time_log)
+
+      .server ="10.211.87.1"
+
+sinks:
+  mariadb_slow_log_sinks:
+    type: kafka
+    inputs:
+      - mariadb_slow_log_transform
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    topic: mariadb_slow_log
+    encoding:
+      codec: json
+    compression: zstd
+
+  mariadb_error_log_sinks:
+    type: kafka
+    inputs:
+      - mariadb_error_log_transform
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    topic: mariadb_error_log
+    encoding:
+      codec: json
+    compression: zstd
+
+  mariadb_innodb_status_sinks:
+    type: kafka
+    inputs:
+      - mariadb_innodb_log_transform
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    topic: mariadb_innodb_log
+    encoding:
+      codec: json
+    compression: zstd
+
+  vector_internal_metrics_sink:
+    type: prometheus_exporter
+    inputs:
+      - vector_internal_metrics
+      - mariadb_slow_log_transform
+      - mariadb_error_log_transform
+      - mariadb_innodb_log_transform
+    address: "0.0.0.0:21039"

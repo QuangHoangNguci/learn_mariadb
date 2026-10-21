@@ -1,0 +1,233 @@
+---
+
+sources:
+  ctt_input:
+    type: kafka
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    group_id: "ctt_log_consumer"
+    topics:
+      - "ctt_log"
+
+  mariadb_slow_log_input:
+    type: kafka
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    group_id: "mariadb_slow_log_consumer"
+    topics:
+      - "mariadb_slow_log"
+
+
+transforms:
+
+  ctt_transforms:
+    type: remap
+    inputs:
+      - ctt_input
+    source: |-
+
+      parsed  = parse_json!(.message)
+
+      . |= object(parsed) ?? {}
+
+      .@timestamp = del(.timestamp)
+
+      # Delete unused fields
+
+      del(.source_type)
+      
+      del(.topic)
+      
+      del(.partition)
+      
+      del(.offset)
+      
+      del(.file)
+
+
+  ctt_filter:
+    type: filter
+    inputs:
+      - ctt_transforms
+    condition: |-
+      !contains!(.message, "Open session in this thread.") &&
+      !contains!(.message, "Commiting transaction in this thread") &&
+      !starts_with!(.message, "active:")
+
+  mariadb_slow_log_transform:
+    type: remap
+    inputs:
+      - mariadb_slow_log_input
+    source: |-
+
+      # Delete unused fields
+
+      del(.source_type)
+      
+      del(.topic)
+      
+      del(.partition)
+      
+      del(.offset)
+      
+      del(.file)
+
+sinks:
+  ctt_output:
+    type: elasticsearch
+    inputs:
+      - ctt_filter
+    endpoint: http://10.255.63.6:9200
+    bulk:
+      action: create
+      index: ctt-stream
+    compression: gzip
+    
+  mariadb_slow_log_output:
+    type: elasticsearch
+    inputs:
+      - mariadb_slow_log_transform
+    endpoint: http://10.255.63.6:9200
+    bulk:
+      action: create
+      index: mariadb-slow-log-stream
+    compression: gzip
+    
+    
+    
+------------------------------------------------------------------------------------------------
+
+---
+sources:
+  mariadb_slow_log_input:
+    type: kafka
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    group_id: "mariadb_slow_log_consumer"
+    topics:
+      - "mariadb_slow_log"
+
+  mariadb_error_log_input:
+    type: kafka
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    group_id: mariadb_error_log_consumer
+    topics:
+      - "mariadb_error_log"
+
+  mariadb_innodb_log_input:
+    type: kafka
+    bootstrap_servers: 10.255.63.6:9092,10.255.63.7:9092,10.255.63.8:9092
+    group_id: mariadb_innodb_log_consumer
+    topics:
+      - "mariadb_innodb_log"
+
+transforms:
+  mariadb_slow_log_transform:
+    type: remap
+    inputs:
+      - mariadb_slow_log_input
+    source: |-
+
+      parsed  = parse_json!(.message)
+
+      . |= object(parsed) ?? {}
+
+      # Delete unused fields
+
+      del(.message)
+
+      del(.source_type)
+
+      del(.topic)
+
+      del(.partition)
+
+      del(.offset)
+
+      del(.file)
+
+  mariadb_error_log_transform:
+    type: remap
+    inputs:
+      - mariadb_error_log_input
+    source: |-
+
+      parsed  = parse_json!(.message)
+
+      . |= object(parsed) ?? {}
+
+      # Delete unused fields
+
+      del(.source_type)
+
+      del(.topic)
+
+      del(.partition)
+
+      del(.offset)
+
+      del(.file)
+
+  mariadb_innodb_log_transform:
+    type: remap
+    inputs:
+      - mariadb_innodb_log_input
+    source: |-
+
+      parsed  = parse_json!(.message)
+
+      . |= object(parsed) ?? {}
+
+      # Delete unused fields
+
+      del(.source_type)
+
+      del(.topic)
+
+      del(.partition)
+
+      del(.offset)
+
+      del(.file)
+      
+      del(.message)
+
+sinks:
+  mariadb_slow_log_output:
+    type: elasticsearch
+    inputs:
+      - mariadb_slow_log_transform
+    endpoint: http://10.255.63.3:9200
+    bulk:
+      action: create
+      index: mariadb-slow-log-stream
+    compression: gzip
+    auth:
+      strategy: basic
+      user: vector-dev
+      password: 123123a@
+
+  mariadb_error_log_output:
+    type: elasticsearch
+    inputs:
+      - mariadb_error_log_transform
+    endpoint: http://10.255.63.3:9200
+    bulk:
+      action: create
+      index: mariadb-error-log-stream
+    compression: gzip
+    auth:
+      strategy: basic
+      user: vector-dev
+      password: 123123a@
+
+  mariadb_innodb_log_output:
+    type: elasticsearch
+    inputs:
+      - mariadb_innodb_log_transform
+    endpoint: http://10.255.63.3:9200
+    bulk:
+      action: create
+      index: mariadb-innodb-log-stream
+    compression: gzip
+    auth:
+      strategy: basic
+      user: vector-dev
+      password: 123123a@

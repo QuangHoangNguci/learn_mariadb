@@ -1,0 +1,119 @@
+#!/bin/bash
+DATETIME=`date +%Y%m%d%H%M`
+START_TIME=`date +'%F %T'`
+SYSNAME=ecommerce-platform
+DB_NAME=--all-databases
+IP=10.211.87.7
+VIP=10.211.87.7
+VIPP=3306
+USER="mbackup"
+PASS="Viettel6996"
+COMMAND_MYSQL="/usr/local/mysql/bin/mariadb"
+##mariabackup for mariadb, xtrabackup for mysql
+##COMMAND_BACKUP="/usr/bin/xtrabackup"
+COMMAND_BACKUP="/usr/local/mysql/bin/mariabackup"
+b=_
+DAYS=3
+##mariabackup for mariadb, xtrabackup for mysql
+##TYPE_BACKUP=xtrabackup
+TYPE_BACKUP=mariabackup
+BACKUP_DIR=/backup/backup_mariadb
+mkdir -p ${BACKUP_DIR}/logs;
+mkdir -p $BACKUP_DIR/backup$b$VIP$b$SYSNAME$b$DATETIME;
+LOG_FILE=${BACKUP_DIR}/logs/full_backup$b$VIP$b$DATETIME.log
+FTP_LOG_FILE=${BACKUP_DIR}/logs/ftp_backup$b$VIP$b$DATETIME.log
+status_run_backup='NOK'
+ihostname=`hostname`;
+status_master=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -P $VIPP -Bse "call vsystem.check_master('$ihostname','$IP');"`;
+echo $status_master > $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/ismaster.info;
+
+START_TIME=`date +'%F %T'`
+START=$(date +%s)
+INPUT_SIZE=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "SELECT concat(round((SUM(DATA_LENGTH) + SUM(INDEX_LENGTH))/1024/1024/1024,3),'G') FROM information_schema.tables;"`;
+cd $BACKUP_DIR
+$COMMAND_BACKUP --galera-info --compress --backup --target-dir=$BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/database --user=$USER --password=$PASS >> $LOG_FILE 2>&1;
+END=$(date +%s)
+DURATION=$(( $END - $START ))
+END_TIME=`date +'%F %T'`
+
+STATUS=`grep "completed OK!" $LOG_FILE | wc -l`;
+if [ $STATUS -eq 1 ]
+then
+        binlogfile=`qpress -do $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/database/mariadb_backup_info.qp | grep binlog_pos | cut -d"'" -f2`;
+        binlogpos=`qpress -do $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/database/mariadb_backup_info.qp | grep binlog_pos | cut -d"'" -f4`;
+        GTID=`qpress -do $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/database/mariadb_backup_info.qp | grep binlog_pos | cut -d"'" -f6`;
+        mkdir -p $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/binlog;
+        last_binlogfile=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "select if(binlog_file = NULL,'NULL',binlog_file) from vsystem.backup_history where STATUS = CONVERT('OK' USING utf8) and binlog_file is not null and ip = CONVERT('$IP' USING utf8) order by start_time desc limit 1;"`;
+        clast_binlogfile=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "select count(*) from vsystem.backup_history where STATUS = CONVERT('OK' USING utf8) and binlog_file is not null and ip = CONVERT('$IP' USING utf8) order by start_time desc limit 1;"`;
+        lindex_binlog=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "show variables like '%log_bin_index%';"`;
+        index_binlog=`echo $lindex_binlog | cut -d" " -f 2`;
+        lbase_binlog=`$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "show variables like '%log_bin_basename%';"`;
+        base_binlog=`echo $lbase_binlog | cut -d" " -f 2`;
+        if [ $clast_binlogfile -eq 0 ]
+        then
+                last_binlogfile=NULL
+        fi
+        if [ $last_binlogfile == NULL ]
+        then
+                cp $index_binlog $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/binlog/mysql-bin.index;
+        else
+                startp=`grep -n $last_binlogfile $index_binlog | cut -d":" -f1`;
+                totalp=`more $index_binlog | wc -l`;
+                list=$(($totalp-$startp+2));
+                tail -$list $index_binlog > $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/binlog/mysql-bin.index;
+        fi
+        while read line
+        do
+                nbinlog=${line:$((${#line}-6)):6};
+                qpress $base_binlog.$nbinlog $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/binlog/binlog.$nbinlog.qp;
+        done < $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/binlog/mysql-bin.index;
+        status_run_backup='OK';
+        OUTPUT_SIZE=`du -sh $BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME/database | awk '{print $1}'`;
+        cd $BACKUP_DIR;
+        a=`ls -lt | grep backup$b$IP | wc -l`;
+        while [ $a -gt $DAYS ]
+        do
+                backupdel=`ls -lt | grep backup$b$IP | tail -1`;
+                rm -rf $backupdel;
+                a=$(($a-1));
+        done
+fi
+
+#Backup to remote server by RSYNC
+FTP_STATUS='NOK'
+FSTART_TIME=`date +'%F %T'`
+remote_backup_user=rsync
+remote_backup_password=xxxx
+REMOTE_BACKUP_SERVER=10.10.10.1
+#FILE_BACKUP=/backup/backup_mariadb/campaign_noti_outbound.231207.sql
+FILE_BACKUP=$BACKUP_DIR/backup$b$IP$b$SYSNAME$b$DATETIME
+echo $FILE_BACKUP
+
+#sshpass -p "xxxx" rsync -avzh /backup/backup_mariadb/campaign_noti_outbound.231207.sql  rsync@10.255.64.66:10.254.150.27 > /tmp/rsync.status 2>&1
+
+/bin/sshpass -p $remote_backup_password rsync -e "ssh -o StrictHostKeyChecking=no" -avzh $FILE_BACKUP  $remote_backup_user@$REMOTE_BACKUP_SERVER:$IP/ > /tmp/rsync.status 2>&1
+
+rsync_error=`cat /tmp/rsync.status | grep -i "rsync error" | wc -l`
+rsync_fail=`cat /tmp/rsync.status | grep -i " Failed" | wc -l`
+
+FEND_TIME=`date +'%F %T'`
+echo FTP from $FSTART_TIME to $FEND_TIME >> $FTP_LOG_FILE
+
+if [ "$rsync_error" -eq 0 ] && [ "$rsync_fail" -eq 0 ]
+then
+        echo 'Sync data success' > /tmp/backup_data.status;
+        /bin/sshpass -p $remote_backup_password rsync -e "ssh -o StrictHostKeyChecking=no" -avzh /tmp/backup_data.status  $remote_backup_user@$REMOTE_BACKUP_SERVER:$IP >> /tmp/rsync.status 2>&1;
+        FTP_STATUS='OK';
+else
+        echo 'Sync data wrong' > /tmp/backup_data.status;
+        /bin/sshpass -p $remote_backup_password rsync -e "ssh -o StrictHostKeyChecking=no" -avzh /tmp/backup_data.status  $remote_backup_user@$REMOTE_BACKUP_SERVER:$IP >> /tmp/rsync.status 2>&1;
+        FTP_STATUS='NOK';
+fi
+
+#WRITE BACKUP INFO INTO DB
+$COMMAND_MYSQL -u "$USER" -p"$PASS" -Bse "insert into vsystem.backup_history (type, ip, ismaster, database_backup, status, start_time, end_time,duration, input_size, output_size, backup_dir, server_ftp, ftp_dir, ftp_status, number_backup, binlog_file, binlog_position, GTID) VALUES ('$TYPE_BACKUP', '$IP', '$status_master', '$DB_NAME', '$status_run_backup', '$START_TIME', '$END_TIME', '$DURATION', '$INPUT_SIZE', '$OUTPUT_SIZE', '$BACKUP_DIR', '$REMOTE_BACKUP_SERVER', '$FTP_DIR', '$FTP_STATUS', '$DAYS', '$binlogfile', '$binlogpos', '$GTID');"
+
+echo "insert into monitor.backup_history (type, ip, ismaster, database_backup, status, start_time, end_time,duration, input_size, output_size, backup_dir, server_ftp, ftp_dir, ftp_status, number_backup, binlog_file, binlog_position, GTID) VALUES ('$TYPE_BACKUP', '$IP', '$status_master', '$DB_NAME', '$status_run_backup', '$START_TIME', '$END_TIME', '$DURATION', '$INPUT_SIZE', '$OUTPUT_SIZE', '$BACKUP_DIR', '$REMOTE_BACKUP_SERVER', '$FTP_DIR', '$FTP_STATUS', '$DAYS', '$binlogfile', '$binlogpos', '$GTID');"
+
+
+echo "update monitor.backup_status set status=$'status', updated_time='$END_TIME' where IP='$IP'"

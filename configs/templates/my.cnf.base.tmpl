@@ -1,0 +1,114 @@
+# ============================================================
+#  my.cnf BASE TEMPLATE  (sinh boi scripts/lib/render_mycnf.sh)
+#
+#  Placeholder dang chu-HOA-giua-2-gach-duoi duoc thay khi render cho tung
+#  instance. Co 2 marker dac biet chiem TRON 1 dong (thay bang noi dung tuy
+#  TOPOLOGY): mot cho read_only (replica dr/dr-cluster), mot cho wsrep
+#  (galera cluster/dr-cluster).
+#
+#  Sua tuning chung tai day. Sua phan rieng galera/dr o:
+#     configs/templates/block.galera.tmpl
+#     configs/templates/block.dr.tmpl
+# ============================================================
+[mysqld]
+basedir       = __INSTALL_DIR__
+plugin_dir    = __INSTALL_DIR__/lib/plugin
+user          = __USER__
+bind-address  = 0.0.0.0
+port          = __PORT__
+extra_port    = __MGNT_PORT__
+extra_max_connections = 15
+
+datadir       = __DATA_DIR__
+tmpdir        = __TMP_DIR__
+socket        = __DATA_DIR__/mariadb.sock
+pid-file      = __DATA_DIR__/mariadb.pid
+log-error     = __LOG_DIR__/mariadb.error.log
+
+skip-host-cache
+skip-name-resolve
+external-locking
+__PROXY_PROTOCOL_LINE__
+
+slow_query_log      = 1
+slow_query_log_file = __LOG_DIR__/mariadb.slow.log
+long-query-time     = 1
+
+# server identity
+# Galera: server-id giong nhau tren moi node cua cluster; gtid_domain_id = wsrep_gtid_domain_id.
+# Non-Galera: server-id duy nhat theo IP; gtid_domain_id = server-id.
+server-id       = __SERVER_ID__
+gtid_domain_id  = __GTID_DOMAIN_ID__
+
+# binary log (san sang cho async replication sau)
+log-bin          = __BINLOG_DIR__/binlog
+log-bin-index    = __BINLOG_DIR__/binlog.index
+log-slave-updates = 1
+binlog_format    = ROW
+expire_logs_days = __EXPIRE_LOGS_DAYS__
+max_binlog_size  = 512M
+__DR_BLOCK__
+# connection
+thread_cache_size = 110
+max_connections   = 4000
+thread_handling   = pool-of-threads
+thread_pool_size  = __THREAD_POOL__
+thread_pool_dedicated_listener = 1
+
+# misc
+sort_buffer_size  = 1048576
+read_buffer_size  = 1048576
+open_files_limit  = __MAX_OPEN_FILES__
+lower_case_table_names = 1
+wait_timeout      = 600
+max_allowed_packet = 512M
+key_buffer_size   = 20M
+thread_stack      = 256K
+max_heap_table_size = 64M
+
+# InnoDB
+innodb_buffer_pool_size      = __BUFFER_POOL_MB__M
+# loose_: innodb_buffer_pool_instances da bi BO tu MariaDB 10.6 (chi con
+# tuong thich nguoc, khong tac dung). loose_ tranh warning/abort giua cac ban.
+loose_innodb_buffer_pool_instances = __BUFFER_POOL_INSTANCES__
+innodb_log_file_size         = __LOG_FILE_SIZE_MB__M
+innodb_log_buffer_size       = 32M
+innodb_file_per_table        = 1
+innodb_open_files            = __MAX_OPEN_FILES__
+innodb_max_dirty_pages_pct   = 30
+innodb_lock_wait_timeout     = 120
+innodb_rollback_on_timeout   = 1
+innodb_flush_method          = O_DIRECT
+innodb_flush_log_at_trx_commit = 2
+innodb_autoinc_lock_mode     = 2
+innodb_print_all_deadlocks   = 1
+innodb_io_capacity           = __IO_CAPACITY__
+innodb_io_capacity_max       = __IO_CAPACITY_MAX__
+innodb_flush_neighbors       = __FLUSH_NEIGHBORS__
+
+# misc tuning
+table_definition_cache   = 2000
+transaction-isolation    = "READ-COMMITTED"
+
+# diagnostics & scheduling
+performance_schema = 1
+userstat           = 1
+event_scheduler    = ON
+
+# audit log
+plugin_load_add        = server_audit
+server_audit_logging   = ON
+server_audit_events    = QUERY_DDL,QUERY_DCL,CONNECT
+server_audit_file_path = '__LOG_DIR__/database_audit.log'
+server_audit_file_rotate_now  = ON
+server_audit_file_rotate_size = 100000000
+server_audit_file_rotations   = 99
+server_audit_output_type      = file
+server_audit_query_log_limit  = 65000
+__GALERA_BLOCK__
+[mysqld_safe]
+log-error = __LOG_DIR__/mariadb.error.log
+pid-file  = __DATA_DIR__/mariadb.pid
+
+[client]
+socket = __DATA_DIR__/mariadb.sock
