@@ -1,0 +1,24 @@
+---
+# SST có thể rất lâu với dữ liệu lớn nên chạy async (khớp TimeoutStartSec=9000 trong unit)
+- name: "start joiner (sync từ bootstrap qua SST)"
+  ansible.builtin.systemd:
+    name: "{{ inst.service }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  async: 9100
+  poll: 30
+
+# Đợi node đồng bộ xong mới sang bước sau
+- name: "chờ node Synced"
+  ansible.builtin.command: >-
+    {{ inst.install_dir }}/bin/mariadb -u root -S {{ inst.socket }} -Nse
+    "SHOW STATUS LIKE 'wsrep_local_state_comment'"
+  environment:
+    MYSQL_PWD: "{{ mariadb_admin_pass }}"
+  register: _state
+  until: "'Synced' in _state.stdout"
+  retries: 60
+  delay: 10
+  changed_when: false
+  no_log: true

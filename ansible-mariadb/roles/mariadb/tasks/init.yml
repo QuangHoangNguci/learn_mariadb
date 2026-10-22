@@ -1,0 +1,29 @@
+---
+# Tương ứng scripts/06_initialize_database.sh
+# Import schema vsystem + users và đặt mật khẩu root.
+# Chỉ chạy trên standalone hoặc node bootstrap; joiner sync data từ bootstrap.
+
+# Bắt buộc có mật khẩu trước khi init
+- name: Kiểm tra mật khẩu
+  when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
+  ansible.builtin.assert:
+    that:
+      - mariadb_admin_pass | length > 0
+      - mariadb_empty_cluster or mariadb_common_pass | length > 0
+      - mariadb_empty_cluster or inst.maxscale_pass | length > 0
+    fail_msg: "Thiếu mariadb_admin_pass / mariadb_common_pass / mariadb_maxscale_pass"
+  no_log: true
+
+# Replica/DR: data + users đến từ primary qua replication, import dễ bị trùng
+- name: Cảnh báo import trên replica
+  ansible.builtin.pause:
+    prompt: "Topology {{ mariadb_topology }} (replica): import schema+users có thể TRÙNG với data replicate từ primary. Nên đặt mariadb_empty_cluster=true. Nhấn Enter để tiếp tục, Ctrl+C để hủy"
+  when:
+    - not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
+    - mariadb_replica_mode and not mariadb_empty_cluster
+    - not (mariadb_assume_yes | default(false))
+
+# Import schema/users cho instance
+- name: Khởi tạo dữ liệu instance
+  ansible.builtin.include_tasks: init_instance.yml
+  when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')

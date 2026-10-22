@@ -1,0 +1,205 @@
+---
+# Tương ứng scripts/09_install_vector.sh
+# Cài Vector để đọc log MariaDB và đẩy sang Kafka / Elasticsearch.
+# Chỉ chạy khi mariadb_install_vector=true.
+
+# Tính lại thông số instance vì giai đoạn này chạy trong play riêng
+- name: Tính thông số instance
+  ansible.builtin.import_tasks: common.yml
+
+# Group chung để Vector chỉ-đọc log MariaDB
+- name: Tạo group đọc log MariaDB
+  ansible.builtin.group:
+    name: "{{ mariadb_log_group }}"
+    system: true
+
+- name: Tạo group Vector
+  ansible.builtin.group:
+    name: "{{ mariadb_vector_group }}"
+    system: true
+
+# Vector chạy bằng user riêng, thuộc group đọc log
+- name: Tạo user Vector
+  ansible.builtin.user:
+    name: "{{ mariadb_vector_user }}"
+    system: true
+    create_home: false
+    home: "{{ mariadb_vector_install_dir }}"
+    shell: /usr/sbin/nologin
+    group: "{{ mariadb_vector_group }}"
+    groups: "{{ mariadb_log_group }}"
+    append: true
+
+# User MariaDB cũng phải thuộc group này để log mới sinh ra đọc được
+- name: Thêm user MariaDB vào group đọc log
+  ansible.builtin.user:
+    name: "{{ inst.user }}"
+    groups: "{{ mariadb_log_group }}"
+    append: true
+
+# Thư mục cài chỉ root ghi, Vector đọc; checkpoint và log của Vector do Vector sở hữu
+- name: Tạo thư mục cài đặt
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ mariadb_vector_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ mariadb_vector_install_dir }}", owner: root, mode: "0750" }
+    - { path: "{{ mariadb_vector_install_dir }}/vector-check-points", owner: "{{ mariadb_vector_user }}", mode: "0700" }
+    - { path: "{{ mariadb_vector_log_dir }}", owner: "{{ mariadb_vector_user }}", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+# Thư mục cha phải traverse được để Vector vào thư mục con
+- name: Mở quyền traverse thư mục cha
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: o+x
+  loop: "{{ [mariadb_vector_install_dir | dirname, mariadb_vector_log_dir | dirname, inst.log_dir | dirname] | unique | reject('equalto', '/') | list }}"
+
+# setgid để file log mới kế thừa group đọc log
+- name: Thư mục log MariaDB (setgid, group đọc log)
+  ansible.builtin.file:
+    path: "{{ inst.log_dir }}"
+    state: directory
+    owner: "{{ inst.user }}"
+    group: "{{ mariadb_log_group }}"
+    mode: "2750"
+
+# Bổ sung quyền đọc cho log đã tồn tại, không mở quyền binlog/datadir
+- name: Tìm log MariaDB hiện có
+  ansible.builtin.find:
+    paths: "{{ inst.log_dir }}"
+    patterns: [mariadb.error.log, mariadb.slow.log, innodb_stat.log, database_audit.log]
+    recurse: false
+  register: _vec_logs
+
+- name: Phân quyền log cho group đọc log
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ inst.user }}"
+    group: "{{ mariadb_log_group }}"
+    mode: "0640"
+  loop: "{{ _vec_logs.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# Tìm binary vector trên controller theo thứ tự ưu tiên
+- name: Tìm binary Vector
+  ansible.builtin.set_fact:
+    _vec_bin: >-
+      {{ lookup('ansible.builtin.first_found', {'files': [
+           mariadb_vector_package_dir ~ '/vector',
+           mariadb_vector_src_dir ~ '/vector',
+           mariadb_setup_sql_dir ~ '/vector'], 'skip': true}) }}
+
+- name: Kiểm tra có binary Vector
+  ansible.builtin.assert:
+    that: _vec_bin | length > 0
+    fail_msg: "Không thấy binary vector; copy vào {{ mariadb_vector_package_dir }}/vector hoặc {{ mariadb_vector_src_dir }}/vector"
+
+# force=false: giữ nguyên binary nếu đã có trên node
+- name: Cài binary Vector
+  ansible.builtin.copy:
+    src: "{{ _vec_bin }}"
+    dest: "{{ mariadb_vector_install_dir }}/vector"
+    owner: root
+    group: root
+    mode: "0755"
+    force: false
+
+# Template cấu hình gốc, sau đó vá log path / checkpoint / IP cho node này
+- name: Tìm template vector.yaml
+  ansible.builtin.set_fact:
+    _vec_yaml: >-
+      {{ lookup('ansible.builtin.first_found', {'files': [
+           mariadb_vector_src_dir ~ '/vector.yaml',
+           mariadb_setup_sql_dir ~ '/vector.yaml'], 'skip': true}) }}
+
+- name: Kiểm tra có vector.yaml
+  ansible.builtin.assert:
+    that: _vec_yaml | length > 0
+    fail_msg: "Không thấy vector.yaml (kiểm tra {{ mariadb_vector_src_dir }}/vector.yaml)"
+
+- name: Copy vector.yaml
+  ansible.builtin.copy:
+    src: "{{ _vec_yaml }}"
+    dest: "{{ mariadb_vector_install_dir }}/vector.yaml"
+    owner: root
+    group: "{{ mariadb_vector_group }}"
+    mode: "0640"
+    backup: true
+
+# Thư mục lưu checkpoint riêng của Vector
+- name: Vá data_dir
+  ansible.builtin.replace:
+    path: "{{ mariadb_vector_install_dir }}/vector.yaml"
+    regexp: '^data_dir:.*$'
+    replace: "data_dir: {{ mariadb_vector_install_dir }}/vector-check-points"
+
+# Trỏ từng nguồn log về log của instance
+- name: Vá đường dẫn log
+  ansible.builtin.replace:
+    path: "{{ mariadb_vector_install_dir }}/vector.yaml"
+    regexp: '(  {{ item.source }}:\n    include:\n)(?:      - .*\n)+'
+    replace: '\1      - {{ inst.log_dir }}/{{ item.file }}\n'
+  loop:
+    - { source: mariadb_slow_log_file, file: mariadb.slow.log }
+    - { source: mariadb_error_log_file, file: mariadb.error.log }
+    - { source: mariadb_innodb_log_file, file: innodb_stat.log }
+  loop_control:
+    label: "{{ item.source }}"
+
+# Gán IP node vào field server của các transform
+- name: Vá IP server trong transform
+  ansible.builtin.replace:
+    path: "{{ mariadb_vector_install_dir }}/vector.yaml"
+    regexp: '\.server\s*=\s*"[^"]*"'
+    replace: '.server = "{{ mariadb_node_ip }}"'
+
+# Vector phải đọc được log bằng chính user của nó
+- name: Kiểm tra user Vector đọc được log
+  ansible.builtin.shell: "[ ! -e {{ item.path }} ] || runuser -u {{ mariadb_vector_user }} -- test -r {{ item.path }}"
+  loop: "{{ _vec_logs.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: false
+
+# Cấu hình sai thì dừng, không start service lỗi
+- name: Validate cấu hình Vector
+  ansible.builtin.command: >-
+    runuser -u {{ mariadb_vector_user }} --
+    {{ mariadb_vector_install_dir }}/vector validate --no-environment {{ mariadb_vector_install_dir }}/vector.yaml
+  changed_when: false
+
+# Unit systemd chạy Vector bằng user riêng
+- name: Ghi unit systemd Vector
+  ansible.builtin.template:
+    src: vector.service.j2
+    dest: "/etc/systemd/system/{{ mariadb_vector_service }}.service"
+    mode: "0644"
+
+# File env chứa credential Kafka/ES, chỉ group Vector đọc
+- name: Kiểm tra vector.env
+  ansible.builtin.stat:
+    path: "{{ mariadb_vector_log_dir }}/vector.env"
+  register: _vec_env
+
+- name: Phân quyền vector.env
+  ansible.builtin.file:
+    path: "{{ mariadb_vector_log_dir }}/vector.env"
+    owner: root
+    group: "{{ mariadb_vector_group }}"
+    mode: "0640"
+  when: _vec_env.stat.exists
+
+# restart để nhận cấu hình mới
+- name: Enable và restart Vector
+  ansible.builtin.systemd:
+    name: "{{ mariadb_vector_service }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true

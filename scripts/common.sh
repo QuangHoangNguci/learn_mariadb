@@ -1,9 +1,6 @@
 #!/bin/bash
 
-#######################################
-# GLOBAL VARS
-#######################################
-
+# Biến toàn cục
 LOG_DIR_CLUSTER="/var/log/mariadb_cluster"
 LOG_FILE_CLUSTER="$LOG_DIR_CLUSTER/cluster.log"
 
@@ -12,10 +9,7 @@ HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 
 mkdir -p "$LOG_DIR_CLUSTER" 2>/dev/null || true
 
-#######################################
-# LOGGING
-#######################################
-
+# Ghi log
 timestamp() { date "+%Y-%m-%d %H:%M:%S"; }
 
 _log() {
@@ -32,10 +26,7 @@ error() { _log "ERROR" "$@"; }
 
 die() { error "$1"; exit 1; }
 
-#######################################
-# CHECKS
-#######################################
-
+# Kiểm tra / tiện ích
 check_root() {
     [ "$EUID" -eq 0 ] || die "Please run as root"
 }
@@ -66,11 +57,8 @@ is_port_in_use() {
     ss -lnt | awk '{print $4}' | grep -q ":$1$"
 }
 
-#######################################
-# CONFIRM (cho thao tac pha huy / nhay cam)
-#   confirm "<cau hoi>" -> 0 neu dong y, 1 neu khong.
-#   Tu dong YES khi ASSUME_YES=true. Tu dong NO khi khong co TTY (an toan).
-#######################################
+# Xác nhận thao tác nguy hiểm: trả 0 nếu đồng ý.
+# ASSUME_YES=true -> tự đồng ý; không có TTY -> tự từ chối.
 confirm() {
     local msg="$1" reply
     if [ "${ASSUME_YES:-false}" = "true" ]; then
@@ -99,35 +87,19 @@ ensure_parents_traversable() {
     done
 }
 
-#######################################
-# STEP HELPER
-#######################################
-
+# Đánh số bước khi log
 STEP=0
 step() {
     STEP=$((STEP + 1))
     log "[STEP $STEP] $1"
 }
 
-#######################################
-# INSTANCES TABLE PARSER
-#
-# Parse format moi INSTANCE_<ID>=(...) hoac INSTANCES_TABLE cu.
-# Format cu: ID PORT MGNT SIZE_GB BUF_MB MAX_RW MAX_RO
-#   BUF_MB : "auto" / "-" / "0" = tu tinh theo SIZE_GB
-#   MAX_RW : 0 / "-" / "" = tat MaxScale R/W
-#   MAX_RO : 0 / "-" / "" = tat MaxScale R/O
-#
-# Output (qua bien toan cuc):
-#   INSTANCE_IDS[]         - mang ID
-#   INSTANCE_PORT[ID]      - port chinh
-#   INSTANCE_MGNT[ID]      - extra_port
-#   INSTANCE_SIZE[ID]      - SIZE_GB
-#   INSTANCE_BUF_MB[ID]    - "auto" hoac so MB
-#   INSTANCE_MAX_RW[ID]    - 0 hoac port
-#   INSTANCE_MAX_RO[ID]    - 0 hoac port
-#   INSTANCE_SIZE_SUM      - tong SIZE_GB cua nhung instance dung BUF auto
-#######################################
+# Đọc danh sách instance từ INSTANCE_<ID>=(...) (hoặc INSTANCES_TABLE kiểu cũ).
+# Kiểu cũ: ID PORT MGNT SIZE_GB BUF_MB MAX_RW MAX_RO
+#   BUF_MB: "auto" / "-" / "0" = tự tính theo SIZE_GB
+#   MAX_RW / MAX_RO: 0 / "-" / "" = tắt cổng MaxScale tương ứng
+# Kết quả ghi vào biến toàn cục INSTANCE_* (IDS, PORT, MGNT, SIZE, BUF_MB, MAX_RW, MAX_RO)
+# và INSTANCE_SIZE_SUM = tổng SIZE_GB của các instance BUF=auto.
 
 declare -ga INSTANCE_IDS=()
 declare -gA INSTANCE_PORT=()
@@ -136,10 +108,10 @@ declare -gA INSTANCE_SIZE=()
 declare -gA INSTANCE_BUF_MB=()
 declare -gA INSTANCE_MAX_RW=()
 declare -gA INSTANCE_MAX_RO=()
-INSTANCE_SIZE_SUM=0   # tong SIZE_GB cua instance BUF=auto (de chia ti le)
+INSTANCE_SIZE_SUM=0
 
 _normalize_port() {
-    # Tra ve 0 neu rong / "-" / "0", nguoc lai tra ve nguyen ban (validate sau)
+    # Rỗng / "-" / "0" -> 0, còn lại giữ nguyên (validate sau)
     local v="${1:-}"
     case "$v" in
         ""|"-"|"0") echo 0 ;;
@@ -157,8 +129,7 @@ parse_instances_table() {
     INSTANCE_MAX_RO=()
     INSTANCE_SIZE_SUM=0
 
-    # Format moi: mot indexed array cho moi instance, tu dong tim theo ten
-    # INSTANCE_<ID>. Thu tu field:
+    # Mỗi instance là 1 array INSTANCE_<ID>, thứ tự field:
     # PORT MGNT SIZE_GB BUF_MB MAX_RW MAX_RO CLUSTER_NAME GALERA_PASS MAXSCALE_PASS
     local -a compact_vars=()
     mapfile -t compact_vars < <(
@@ -194,16 +165,14 @@ parse_instances_table() {
         [ -z "$line" ] && continue
         [[ "$line" =~ ^# ]] && continue
 
-        # 7 cot. Cot thieu se thanh chuoi rong.
         read -r id port mgnt size buf max_rw max_ro <<< "$line"
 
-        # Validate cot bat buoc
         [[ "$id"   =~ ^[0-9]+$ ]] || die "Instance ID khong hop le: '$id'"
         [[ "$port" =~ ^[0-9]+$ ]] || die "Instance $id: PORT khong hop le: '$port'"
         [[ "$mgnt" =~ ^[0-9]+$ ]] || die "Instance $id: MGNT khong hop le: '$mgnt'"
         [[ "$size" =~ ^[0-9]+$ ]] || die "Instance $id: SIZE_GB khong hop le: '$size'"
 
-        # BUF_MB: "auto" hoac so nguyen >= 64 (khong thi vo nghia)
+        # BUF_MB: "auto" hoặc số nguyên >= 64
         local buf_norm
         case "${buf:-auto}" in
             ""|"-"|"0"|"auto"|"AUTO") buf_norm="auto" ;;
@@ -240,7 +209,7 @@ parse_instances_table() {
         INSTANCE_MAX_RW[$id]="$rw_norm"
         INSTANCE_MAX_RO[$id]="$ro_norm"
 
-        # Chi cong tong SIZE cho instance BUF=auto (de chia ti le dung)
+        # Chỉ cộng SIZE của instance BUF=auto để chia tỉ lệ RAM
         if [ "$buf_norm" = "auto" ]; then
             INSTANCE_SIZE_SUM=$((INSTANCE_SIZE_SUM + size))
         fi
@@ -249,17 +218,9 @@ parse_instances_table() {
     [ "${#INSTANCE_IDS[@]}" -gt 0 ] || die "Khong co instance hop le"
 }
 
-#######################################
-# PATH RENDER
-#
-# Thay {ID} trong PATTERN bang ID thuc te
-#######################################
-
-# Suffix dung cho ten install dir / user / service / file config.
-# Quyet dinh theo ID (KHONG dung co global):
-#   ID = 0  -> rong  (ten MAC DINH: mariadb, /etc/my.cnf ...)
-#   ID >= 1 -> "_<ID>" (mariadb_1, /etc/my_1.cnf ...)
-# Nho the tren CUNG 1 server co the tron: ID 0 = my.cnf, ID 1 = my_1.cnf
+# Suffix cho tên thư mục cài / user / service / file config:
+#   ID = 0  -> rỗng (tên mặc định: mariadb, /etc/my.cnf)
+#   ID >= 1 -> "_<ID>" (mariadb_1, /etc/my_1.cnf)
 id_suffix() {
     if [ "$1" = "0" ]; then
         echo ""
@@ -272,9 +233,7 @@ render_path() {
     local pattern="$1"
     local id="$2"
     if [ "$id" = "0" ]; then
-        # ID=0: bo ca "_{ID}" lan "{ID}" de ra duong dan khong so.
-        #   /u01/data_{ID}/database -> /u01/data/database
-        #   /etc/my_{ID}.cnf        -> /etc/my.cnf
+        # ID=0: bỏ "_{ID}" và "{ID}", vd /etc/my_{ID}.cnf -> /etc/my.cnf
         pattern="${pattern//_\{ID\}/}"
         pattern="${pattern//\{ID\}/}"
         echo "$pattern"
@@ -295,18 +254,14 @@ get_service_name() {
     echo "${INSTANCE_NAME_PREFIX:-mariadb}$(id_suffix "$1")"
 }
 
+# Thay {ID} trong pattern đường dẫn bằng ID thực
 get_data_dir()    { render_path "$DATA_DIR_PATTERN"    "$1"; }
 get_tmp_dir()     { render_path "$TMP_DIR_PATTERN"     "$1"; }
 get_log_dir()     { render_path "$LOG_DIR_PATTERN"     "$1"; }
 get_binlog_dir()  { render_path "$BINLOG_DIR_PATTERN"  "$1"; }
 get_conf_file()   { render_path "$CONFIG_FILE_PATTERN" "$1"; }
 
-#######################################
-# PER-INSTANCE SETTINGS
-#
-# New config stores all values in INSTANCE_<ID> arrays. Legacy per-ID and
-# global variables are still accepted as fallback.
-#######################################
+# Cấu hình theo instance: ưu tiên array INSTANCE_<ID>, fallback biến cũ theo ID / biến global
 
 get_instance_setting() {
     local base="$1" id="$2" fallback="${3:-}"
@@ -347,16 +302,10 @@ get_instance_maxscale_pass() {
     get_instance_setting "MAXSCALE_PASS" "$1" "${MAXSCALE_PASS:-}"
 }
 
-#######################################
-# TOPOLOGY  (cong tac tong: single | dr | cluster | dr-cluster)
-#
-# derive_topology() doc TOPOLOGY va SET 2 bien suy ra:
-#   ENABLE_GALERA = true  khi cluster / dr-cluster
-#   REPLICA_MODE  = true  khi dr / dr-cluster   (read_only=1 trong my.cnf)
-# Cac script cu doc ENABLE_GALERA / is_galera_enabled van chay binh thuong.
-#######################################
-
-# Back-compat: neu env cu chua co TOPOLOGY nhung co ENABLE_GALERA, suy nguoc ra.
+# TOPOLOGY: single | dr | cluster | dr-cluster. Suy ra:
+#   ENABLE_GALERA = true khi cluster / dr-cluster
+#   REPLICA_MODE  = true khi dr / dr-cluster (read_only=1)
+# Env cũ không có TOPOLOGY thì suy ngược từ ENABLE_GALERA.
 derive_topology() {
     if [ -z "${TOPOLOGY:-}" ]; then
         if [ "${ENABLE_GALERA:-false}" = "true" ]; then
@@ -377,7 +326,6 @@ derive_topology() {
     export TOPOLOGY ENABLE_GALERA REPLICA_MODE
 }
 
-# Mo ta ngan cho 1 topology (in trong summary)
 topology_desc() {
     case "${TOPOLOGY:-single}" in
         single)     echo "standalone master read-write (binlog ON)" ;;
@@ -388,21 +336,16 @@ topology_desc() {
     esac
 }
 
-#######################################
-# GALERA / REPLICA HELPERS
-#######################################
-
 is_galera_enabled() {
     [ "${ENABLE_GALERA:-false}" = "true" ]
 }
 
-# Replica/DR mode: them read_only=1 + mo iptables PRIMARY_NODES + goi y CHANGE MASTER.
+# Replica/DR: read_only=1, mở iptables cho PRIMARY_NODES, gợi ý CHANGE MASTER
 is_replica() {
     [ "${REPLICA_MODE:-false}" = "true" ]
 }
 
-# Tinh port WSREP cho mot ID instance
-# Tra ve qua bien WSREP_LISTEN, WSREP_SST, WSREP_IST
+# Tính port WSREP của 1 instance -> WSREP_LISTEN, WSREP_SST, WSREP_IST
 compute_wsrep_ports() {
     local id="$1"
     local base=$(( ${WSREP_BASE_PORT:-1030} + id * ${WSREP_PORT_STEP:-100} ))
@@ -411,8 +354,7 @@ compute_wsrep_ports() {
     WSREP_IST=$((    base + 3 ))
 }
 
-# Vi tri server hien tai trong CLUSTER_NODES (1-based).
-# Tra ve qua bien NODE_INDEX, NODE_COUNT, LOCAL_CLUSTER_IP.
+# Vị trí server hiện tại trong CLUSTER_NODES (từ 1) -> NODE_INDEX, NODE_COUNT, LOCAL_CLUSTER_IP
 detect_node_index() {
     NODE_INDEX=0
     NODE_COUNT=0
@@ -438,18 +380,14 @@ detect_node_index() {
     fi
 }
 
-#######################################
-# DISK TYPE DETECT
-#######################################
-
+# Phát hiện loại đĩa (ssd/hdd)
 detect_disk_type() {
     local explicit="${DISK_TYPE:-auto}"
     case "$explicit" in
         ssd|hdd) echo "$explicit"; return ;;
     esac
 
-    # auto: doc /sys/block/<dev>/queue/rotational
-    # rotational=0 -> SSD/NVMe ; =1 -> HDD
+    # auto: rotational=0 -> SSD/NVMe, =1 -> HDD
     local dev rot
     for dev in /sys/block/sd? /sys/block/nvme?n? /sys/block/vd?; do
         [ -d "$dev" ] || continue
@@ -462,17 +400,9 @@ detect_disk_type() {
     echo "hdd"
 }
 
-#######################################
-# AUTO-TUNE COMPUTE
-#
-# Doc: HOST_RAM_MB, HOST_CPU, INSTANCE_SIZE[ID], INSTANCE_SIZE_SUM, RESERVED_RAM_PCT
-# Output qua bien toan cuc cho 1 ID:
-#   TUNE_BP_MB                   - innodb_buffer_pool_size (MB)
-#   TUNE_BP_INSTANCES            - innodb_buffer_pool_instances
-#   TUNE_LOG_FILE_MB             - innodb_log_file_size (MB)
-#   TUNE_IO_CAP / TUNE_IO_MAX    - innodb_io_capacity (max)
-#   TUNE_THREAD_POOL             - thread_pool_size
-#######################################
+# Tự tính thông số theo RAM/CPU/SIZE_GB cho 1 instance:
+#   TUNE_BP_MB (innodb_buffer_pool_size), TUNE_BP_INSTANCES, TUNE_LOG_FILE_MB,
+#   TUNE_IO_CAP / TUNE_IO_MAX (innodb_io_capacity / _max), TUNE_THREAD_POOL
 
 compute_tune_for_id() {
     local id="$1"
@@ -489,12 +419,11 @@ compute_tune_for_id() {
     local buf="${INSTANCE_BUF_MB[$id]:-auto}"
     TUNE_BP_SRC="auto"
     if [ "$buf" != "auto" ]; then
-        # Override thu cong
+        # Người dùng chỉ định tay
         TUNE_BP_MB="$buf"
         TUNE_BP_SRC="manual"
     else
-        # Auto: chi chia phan RAM con lai cho cac instance auto khac
-        # (instance manual da chiem phan cua minh roi)
+        # Auto: chia RAM còn lại (sau phần manual) theo tỉ lệ SIZE_GB
         local used_by_manual=0
         local oid
         for oid in "${INSTANCE_IDS[@]}"; do
@@ -514,18 +443,18 @@ compute_tune_for_id() {
         [ "$TUNE_BP_MB" -lt 128 ] && TUNE_BP_MB=128
     fi
 
-    # Buffer pool instances: floor(BP_GB), cap 1..8
+    # Buffer pool instances = số GB, giới hạn 1..8
     local bp_gb=$(( TUNE_BP_MB / 1024 ))
     TUNE_BP_INSTANCES=$bp_gb
     [ "$TUNE_BP_INSTANCES" -lt 1 ] && TUNE_BP_INSTANCES=1
     [ "$TUNE_BP_INSTANCES" -gt 8 ] && TUNE_BP_INSTANCES=8
 
-    # innodb_log_file_size = 25% buffer pool, floor 256M cap 2048M
+    # innodb_log_file_size = 25% buffer pool, trong khoảng 256..2048MB
     TUNE_LOG_FILE_MB=$(( TUNE_BP_MB / 4 ))
     [ "$TUNE_LOG_FILE_MB" -lt 256 ]  && TUNE_LOG_FILE_MB=256
     [ "$TUNE_LOG_FILE_MB" -gt 2048 ] && TUNE_LOG_FILE_MB=2048
 
-    # IO capacity theo disk type
+    # IO capacity theo loại đĩa
     local dtype
     dtype=$(detect_disk_type)
     if [ "$dtype" = "ssd" ]; then
@@ -537,21 +466,17 @@ compute_tune_for_id() {
     fi
     TUNE_DISK_TYPE="$dtype"
 
-    # Thread pool: CPU*2, cap 64
+    # Thread pool = CPU*2, trong khoảng 4..64
     TUNE_THREAD_POOL=$(( HOST_CPU * 2 ))
     [ "$TUNE_THREAD_POOL" -gt 64 ] && TUNE_THREAD_POOL=64
     [ "$TUNE_THREAD_POOL" -lt 4 ]  && TUNE_THREAD_POOL=4
     return 0
 }
 
-#######################################
-# VALIDATE CLUSTER.ENV
-#######################################
-
+# Kiểm tra cluster.env
 validate_cluster_env() {
     local errors=0 id
 
-    # Suy ra ENABLE_GALERA / REPLICA_MODE tu TOPOLOGY (die neu TOPOLOGY sai)
     derive_topology
 
     local required=(
@@ -579,7 +504,7 @@ validate_cluster_env() {
            errors=$((errors + 1)) ;;
     esac
 
-    # Galera-specific
+    # Điều kiện riêng của Galera
     if [ "${ENABLE_GALERA:-false}" = "true" ]; then
         case "${NODE_ROLE:-}" in
             bootstrap|joiner) ;;
@@ -596,7 +521,7 @@ validate_cluster_env() {
         fi
     fi
 
-    # Replica/DR-specific: can PRIMARY_NODES de mo iptables keo binlog tu primary.
+    # Replica/DR cần PRIMARY_NODES để mở iptables kéo binlog
     if is_replica && [ -z "${PRIMARY_NODES:-}" ]; then
         error "TOPOLOGY=$TOPOLOGY (replica) thi PRIMARY_NODES khong duoc rong (IP primary de mo iptables)"
         errors=$((errors + 1))
@@ -619,7 +544,6 @@ validate_cluster_env() {
 
     parse_instances_table
 
-    # Settings co the khai bao rieng theo ID. Bien global cu van la fallback.
     for id in "${INSTANCE_IDS[@]}"; do
         if is_galera_enabled; then
             if [ -z "$(get_instance_cluster_name "$id")" ]; then
@@ -635,7 +559,7 @@ validate_cluster_env() {
 
     [ "$errors" -eq 0 ] || die "Tim thay $errors loi trong cluster.env"
 
-    # Check port trung lap (PORT, MGNT, MAX_RW, MAX_RO, va WSREP neu galera)
+    # Kiểm tra trùng port (PORT, MGNT, MAX_RW, MAX_RO, WSREP nếu Galera)
     declare -A seen_port=()
     for id in "${INSTANCE_IDS[@]}"; do
         local p_list=(
@@ -649,7 +573,7 @@ validate_cluster_env() {
             p_list+=("$WSREP_LISTEN" "$WSREP_SST" "$WSREP_IST")
         fi
         for x in "${p_list[@]}"; do
-            [ "$x" = "0" ] && continue  # 0 = tat, khong tinh trung
+            [ "$x" = "0" ] && continue  # 0 = tắt
             if [ -n "${seen_port[$x]:-}" ]; then
                 die "Port $x bi lap (xem ID=$id va ID=${seen_port[$x]})"
             fi
@@ -657,7 +581,7 @@ validate_cluster_env() {
         done
     done
 
-    # Tong buffer manual khong vuot RAM usable
+    # Tổng buffer manual không được vượt RAM khả dụng
     local usable_mb manual_sum=0 oid
     HOST_RAM_MB_VALIDATE=$(free -m | awk '/Mem:/ {print $2}')
     usable_mb=$(( HOST_RAM_MB_VALIDATE * (100 - ${RESERVED_RAM_PCT:-25}) / 100 ))
@@ -673,15 +597,12 @@ validate_cluster_env() {
     log "cluster.env validation: OK (${#INSTANCE_IDS[@]} instance(s), manual_buf=${manual_sum}MB, auto_size_sum=${INSTANCE_SIZE_SUM}GB)"
 }
 
-#######################################
-# PASSWORD VALIDATE (chi goi tu 06)
-#######################################
-
+# Kiểm tra password (chỉ gọi từ script 06)
 validate_passwords_for_init() {
     local errors=0
 
     if [ "${EMPTY_CLUSTER:-false}" = "true" ]; then
-        # EMPTY_CLUSTER chi can ADMIN_PASS de set root
+        # EMPTY_CLUSTER chỉ cần ADMIN_PASS để đặt mật khẩu root
         if [ -z "${ADMIN_PASS:-}" ]; then
             error "EMPTY_CLUSTER=true van can ADMIN_PASS (de set root password)"
             errors=$((errors + 1))
@@ -695,7 +616,7 @@ validate_passwords_for_init() {
         done
     fi
 
-    # Check do dai >= 6 (khop password policy)
+    # Độ dài >= 6 (theo password policy)
     for v in ADMIN_PASS COMMON_PASS; do
         local val="${!v:-}"
         if [ -n "$val" ] && [ ${#val} -lt 6 ]; then
@@ -729,10 +650,7 @@ validate_passwords_for_init() {
     [ "$errors" -eq 0 ] || die "Tim thay $errors loi password."
 }
 
-#######################################
-# RESOURCE PRECHECK
-#######################################
-
+# Kiểm tra tài nguyên (chỉ cảnh báo)
 check_disk_space() {
     local path="$1" min_mb="$2"
     local avail
@@ -744,7 +662,6 @@ check_disk_space() {
 }
 
 preflight_check() {
-    # Don gian: chi warn neu RAM hoac disk it
     local n=${#INSTANCE_IDS[@]}
     [ "$n" -eq 0 ] && return 0
 
@@ -755,7 +672,7 @@ preflight_check() {
         warn "RAM thap: ${ram}MB (khuyen nghi >= ${min_ram}MB cho $n instance)"
     fi
 
-    # check 1 sample data/log path (lay tu instance dau)
+    # Lấy đường dẫn data/log của instance đầu làm mẫu
     local first_id="${INSTANCE_IDS[0]}"
     local data_sample log_sample
     data_sample="$(get_data_dir "$first_id")"

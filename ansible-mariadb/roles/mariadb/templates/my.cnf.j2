@@ -1,0 +1,140 @@
+# {{ ansible_managed }}
+# MariaDB - topology: {{ mariadb_topology }}
+[mysqld]
+basedir       = {{ inst.install_dir }}
+plugin_dir    = {{ inst.install_dir }}/lib/plugin
+user          = {{ inst.user }}
+bind-address  = 0.0.0.0
+port          = {{ inst.port }}
+extra_port    = {{ inst.mgnt }}
+extra_max_connections = 15
+
+datadir       = {{ inst.data_dir }}
+tmpdir        = {{ inst.tmp_dir }}
+socket        = {{ inst.socket }}
+pid-file      = {{ inst.data_dir }}/mariadb.pid
+log-error     = {{ inst.log_dir }}/mariadb.error.log
+
+skip-host-cache
+skip-name-resolve
+external-locking
+{% if mariadb_galera_enabled %}
+# proxy_protocol cho MaxScale: chấp nhận PROXY header từ các IP trong cluster
+proxy_protocol_networks = {{ mariadb_cluster_nodes | join(',') }}
+{% endif %}
+
+slow_query_log      = 1
+slow_query_log_file = {{ inst.log_dir }}/mariadb.slow.log
+long-query-time     = 1
+
+# Galera: server-id giống nhau trên mọi node; gtid_domain_id = wsrep_gtid_domain_id.
+# Không Galera: server-id duy nhất theo IP; gtid_domain_id = server-id.
+server-id       = {{ inst.server_id }}
+gtid_domain_id  = {{ inst.gtid_domain_id }}
+
+# binary log (sẵn sàng cho async replication)
+log-bin          = {{ inst.binlog_dir }}/binlog
+log-bin-index    = {{ inst.binlog_dir }}/binlog.index
+log-slave-updates = 1
+binlog_format    = ROW
+expire_logs_days = {{ mariadb_expire_logs_days }}
+max_binlog_size  = 512M
+{% if mariadb_replica_mode %}
+
+# ===== DR / REPLICA (read_only) =====
+# Node replica async, kéo binlog từ primary. read_only chặn client thường ghi,
+# replication thread (và wsrep applier với dr-cluster) vẫn ghi được.
+# Sau khi deploy, setup slave thủ công:
+#   CHANGE MASTER TO MASTER_HOST='<primary>', MASTER_USER='replicant', ..., MASTER_USE_GTID=slave_pos; START SLAVE;
+read_only = 1
+# loose_: biến chỉ có từ MariaDB 11.4+, bản cũ chỉ cảnh báo rồi bỏ qua
+loose_slave_connections_needed_for_purge = 0
+{% endif %}
+
+# connection
+thread_cache_size = 110
+max_connections   = 4000
+thread_handling   = pool-of-threads
+thread_pool_size  = {{ inst.thread_pool }}
+thread_pool_dedicated_listener = 1
+
+# misc
+sort_buffer_size  = 1048576
+read_buffer_size  = 1048576
+open_files_limit  = {{ mariadb_max_open_files }}
+lower_case_table_names = 1
+wait_timeout      = 600
+max_allowed_packet = 512M
+key_buffer_size   = 20M
+thread_stack      = 256K
+max_heap_table_size = 64M
+
+# InnoDB
+innodb_buffer_pool_size      = {{ inst.bp_mb }}M
+# loose_: innodb_buffer_pool_instances đã bị bỏ từ MariaDB 10.6
+loose_innodb_buffer_pool_instances = {{ inst.bp_instances }}
+innodb_log_file_size         = {{ inst.log_file_mb }}M
+innodb_log_buffer_size       = 32M
+innodb_file_per_table        = 1
+innodb_open_files            = {{ mariadb_max_open_files }}
+innodb_max_dirty_pages_pct   = 30
+innodb_lock_wait_timeout     = 120
+innodb_rollback_on_timeout   = 1
+innodb_flush_method          = O_DIRECT
+innodb_flush_log_at_trx_commit = 2
+innodb_autoinc_lock_mode     = 2
+innodb_print_all_deadlocks   = 1
+innodb_io_capacity           = {{ inst.io_cap }}
+innodb_io_capacity_max       = {{ inst.io_max }}
+innodb_flush_neighbors       = {{ inst.flush_neighbors }}
+
+# misc tuning
+table_definition_cache   = 2000
+transaction-isolation    = "READ-COMMITTED"
+
+# diagnostics & scheduling
+performance_schema = 1
+userstat           = 1
+event_scheduler    = ON
+
+# audit log
+plugin_load_add        = server_audit
+server_audit_logging   = ON
+server_audit_events    = QUERY_DDL,QUERY_DCL,CONNECT
+server_audit_file_path = '{{ inst.log_dir }}/database_audit.log'
+server_audit_file_rotate_now  = ON
+server_audit_file_rotate_size = 100000000
+server_audit_file_rotations   = 99
+server_audit_output_type      = file
+server_audit_query_log_limit  = 65000
+{% if mariadb_galera_enabled %}
+
+# ===== GALERA =====
+wsrep_on            = ON
+wsrep_provider      = {{ _wsrep_provider }}
+wsrep_cluster_name  = "{{ inst.cluster_name }}"
+wsrep_node_name     = {{ inst.wsrep_node_name }}
+wsrep_node_address  = {{ mariadb_node_ip }}:{{ inst.wsrep_listen }}
+wsrep_cluster_address = gcomm://{% for ip in mariadb_cluster_nodes %}{{ ip }}:{{ inst.wsrep_listen }}{{ ',' if not loop.last else '' }}{% endfor %}
+
+
+wsrep_provider_options = "cert.log_conflicts=ON;gcache.size={{ mariadb_gcache_size }};gmcast.listen_addr=tcp://{{ mariadb_node_ip }}:{{ inst.wsrep_listen }};ist.recv_addr={{ mariadb_node_ip }}:{{ inst.wsrep_ist }}"
+
+wsrep_sst_method          = mariabackup
+wsrep_sst_receive_address = {{ mariadb_node_ip }}:{{ inst.wsrep_sst }}
+wsrep_sst_auth            = {{ mariadb_galera_user_prefix }}:{{ inst.galera_pass }}
+wsrep_slave_threads       = {{ inst.thread_pool }}
+wsrep_gtid_mode           = ON
+wsrep_gtid_domain_id      = {{ inst.gtid_domain_id }}
+
+# Galera: autoinc giống nhau trên mọi node (certification tự xử lý conflict)
+auto_increment_increment = 2
+auto_increment_offset    = 1
+{% endif %}
+
+[mysqld_safe]
+log-error = {{ inst.log_dir }}/mariadb.error.log
+pid-file  = {{ inst.data_dir }}/mariadb.pid
+
+[client]
+socket = {{ inst.socket }}

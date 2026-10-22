@@ -1,0 +1,8 @@
+---
+# Chạy MariaDB không Galera
+- name: "enable + start"
+  ansible.builtin.systemd:
+    name: "{{ inst.service }}"
+    state: started
+    enabled: true
+    daemon_reload: true

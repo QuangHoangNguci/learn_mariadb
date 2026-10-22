@@ -1,0 +1,22 @@
+---
+# Giải phóng port 3306
+- name: Dừng và vô hiệu hóa service MariaDB/MySQL của OS
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: [mariadb, mysql, mysqld]
+  failed_when: false
+
+# Tránh my.cnf của OS ảnh hưởng instance
+- name: Xóa /etc/mysql
+  ansible.builtin.file:
+    path: /etc/mysql
+    state: absent
+
+# Tránh xung đột client
+- name: Gỡ gói client MariaDB của OS
+  ansible.builtin.command: dpkg --purge --force-all mariadb-client mariadb-client-core mariadb-common
+  failed_when: false
+  changed_when: false
+  when: ansible_os_family == 'Debian'

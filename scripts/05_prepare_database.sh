@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Tao DB rong (mariadb-install-db).
-# KHONG set root password, KHONG import schema, KHONG tao user.
+# Tạo DB rỗng bằng mariadb-install-db.
+# Không đặt mật khẩu root, không import schema, không tạo user.
 
 set -euo pipefail
 
@@ -47,7 +47,7 @@ for id in "${INSTANCE_IDS[@]}"; do
         fi
     fi
 
-    # DB da init truoc do
+    # Đã init trước đó
     if [ -d "$DATA_DIR/mysql" ]; then
         log "Instance $id da init truoc do ($DATA_DIR/mysql ton tai) -> skip"
         continue
@@ -57,7 +57,7 @@ for id in "${INSTANCE_IDS[@]}"; do
 
     ensure_dir "$DATA_DIR"
 
-    # Data dir co rac
+    # Data dir còn file rác
     if [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
         [ "$DATA_DIR" != "/" ] || die "CRITICAL: DATA_DIR la root, abort"
 

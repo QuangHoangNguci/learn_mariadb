@@ -1,0 +1,8 @@
+{% set max_conn = [mariadb_cpu | int * 50, 500] | min %}
+# {{ ansible_managed }}
+vm.swappiness=1
+fs.file-max={{ [max_conn | int * 200, 100000] | max }}
+vm.min_free_kbytes={{ (mariadb_ram_mb | int * 1024 * 0.015) | int }}
+{% if mariadb_enable_numa_disable %}
+vm.zone_reclaim_mode=0
+{% endif %}

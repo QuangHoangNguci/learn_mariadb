@@ -10,25 +10,21 @@ source ./common.sh
 check_root
 log "===== START INSTALL DB JOBS (MULTI INSTANCE) ====="
 
-# Populate INSTANCE_IDS, INSTANCE_PORT... tu cau hinh instance
+# Nạp INSTANCE_IDS, INSTANCE_PORT... từ cấu hình instance
 validate_cluster_env
-
-# ========================
-# PATH & ROLE
-# ========================
 
 DB_SCRIPT_DIR="${DB_SCRIPT_DIR:-/u01/apps/db_script}"
 ROLE="${NODE_ROLE:-bootstrap}"
 DB_JOB_OS_USER="${DB_JOB_OS_USER:-mariadb_jobs}"
 MARIADB_LOG_GROUP="${MARIADB_LOG_GROUP:-mariadb_log_readers}"
-# Chi dung de go cron cua phien ban cu; backup moi khong chay bang user nay.
+# Chỉ dùng để gỡ cron của phiên bản cũ; backup mới không chạy bằng user này.
 LEGACY_BACKUP_OS_USER="${BACKUP_OS_USER:-}"
 
 ensure_dir "$DB_SCRIPT_DIR"
 chmod 755 "$DB_SCRIPT_DIR"
 
-# Partition/analyze khong can quyen OS cua root hay MariaDB daemon. Dung mot
-# system user rieng; shell nologin van chay duoc tu /etc/cron.d.
+# Partition/analyze không cần quyền root hay user của MariaDB daemon nên dùng
+# một system user riêng; shell nologin vẫn chạy được từ /etc/cron.d.
 if ! id "$DB_JOB_OS_USER" >/dev/null 2>&1; then
     NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || true)"
     NOLOGIN_SHELL="${NOLOGIN_SHELL:-/usr/sbin/nologin}"
@@ -41,7 +37,7 @@ if ! getent group "$MARIADB_LOG_GROUP" >/dev/null 2>&1; then
     groupadd --system "$MARIADB_LOG_GROUP"
 fi
 
-# Thu muc log_innodb cho tung instance (innodb_stat.sh can co san)
+# Tạo sẵn thư mục log_innodb cho từng instance (innodb_stat.sh cần có sẵn)
 for id in "${INSTANCE_IDS[@]}"; do
     INSTANCE_LOG_DIR="$(get_log_dir "$id")"
     ensure_dir "${INSTANCE_LOG_DIR}/log_innodb"
@@ -60,8 +56,8 @@ for id in "${INSTANCE_IDS[@]}"; do
         chmod 640 "$log_path"
     done
 
-    # Ban cu cai logrotate he thong (chay root) cung xoay error/slow log, trung
-    # voi job rotate per-instance ben duoi. Go file do khi migrate sang non-root.
+    # Bản cũ cài logrotate hệ thống (chạy root) cũng xoay error/slow log, trùng
+    # với job rotate theo instance bên dưới. Gỡ file đó khi migrate sang non-root.
     LEGACY_LOGROTATE_FILE="/etc/logrotate.d/$(get_service_name "$id")"
     if [ -f "$LEGACY_LOGROTATE_FILE" ]; then
         rm -f "$LEGACY_LOGROTATE_FILE"
@@ -69,22 +65,19 @@ for id in "${INSTANCE_IDS[@]}"; do
     fi
 done
 
-# Dung IP local de innodb_stat.sh gan nhan server chinh xac
+# IP local để innodb_stat.sh gắn nhãn server chính xác
 LOCAL_IP="${DR_NODE_IP:-$(hostname -I | awk '{print $1}')}"
 
-# ========================
-# BACKUP OWNERSHIP (moi instance chay bang dung MariaDB OS user cua no)
-# ========================
-
+# Quyền sở hữu backup: mỗi instance chạy bằng đúng MariaDB OS user của nó
 BACKUP_DIR_EFF="${BACKUP_DIR:-/backup/backup_mariadb}"
 ensure_dir "$BACKUP_DIR_EFF"
 chmod 755 "$BACKUP_DIR_EFF" "$DB_SCRIPT_DIR"
 ensure_parents_traversable "$BACKUP_DIR_EFF"
 ensure_parents_traversable "$DB_SCRIPT_DIR"
 
-# mc thuong duoc copy vao /usr/local/bin boi user cai dat va co mode 0760,
-# khien cron chay bang MariaDB OS user khong execute duoc. Chuan hoa binary
-# dung chung; alias cua root se duoc copy sang config rieng cua tung instance.
+# mc thường được user cài đặt copy vào /usr/local/bin với mode 0760, khiến cron
+# chạy bằng MariaDB OS user không thực thi được. Chuẩn hóa binary dùng chung;
+# alias của root sẽ được copy sang config riêng của từng instance.
 MC_BIN_EFF="${MINIO_MC_BIN:-/usr/local/bin/mc}"
 MC_ALIAS_EFF="${MINIO_ALIAS:-backup}"
 ROOT_HOME="$(getent passwd root | awk -F: 'NR==1 {print $6}')"
@@ -127,8 +120,8 @@ for id in "${INSTANCE_IDS[@]}"; do
     chown "$iuser:$igroup" "$ibackup" "$ibackup/logs"
     chmod 700 "$ibackup" "$ibackup/logs"
 
-    # Khong phu thuoc HOME cua system user. Moi instance co mot mc config dir
-    # doc duoc boi dung OS user chay cron; neu root da set alias thi seed vao day.
+    # Không phụ thuộc HOME của system user. Mỗi instance có một mc config dir
+    # chỉ OS user chạy cron đọc được; nếu root đã set alias thì copy vào đây.
     imc_config="${ibackup}/.mc"
     ensure_dir "$imc_config"
     if [ "$ROOT_MC_ALIAS_READY" = true ]; then
@@ -146,17 +139,13 @@ for id in "${INSTANCE_IDS[@]}"; do
     [ "$ROOT_MC_ALIAS_READY" = true ] && log "Instance $id MinIO config: $imc_config (alias=$MC_ALIAS_EFF)"
 done
 
-# Phien ban cu tao job root de sua quyen datadir truoc khi backup.
-# Thiet ke moi khong dung file nay nua vi backup chay bang chinh MariaDB OS user.
+# Bản cũ tạo job root để sửa quyền datadir trước khi backup; thiết kế mới
+# không dùng nữa vì backup chạy bằng chính MariaDB OS user.
 LEGACY_FIXPERM_FILE="${DB_SCRIPT_DIR}/fix_db_dir_perm.sh"
 if [ -f "$LEGACY_FIXPERM_FILE" ]; then
     rm -f "$LEGACY_FIXPERM_FILE"
     log "Da xoa script sua quyen backup cu: $LEGACY_FIXPERM_FILE"
 fi
-
-# ========================
-# GENERATE: auto_add_partition.sh
-# ========================
 
 step "Generate auto_add_partition.sh"
 
@@ -188,10 +177,6 @@ AUTO_PART_FILE="${DB_SCRIPT_DIR}/auto_add_partition.sh"
 chown "$DB_JOB_OS_USER:$DB_JOB_OS_GROUP" "$AUTO_PART_FILE"
 chmod 700 "$AUTO_PART_FILE"
 log "Generated: $AUTO_PART_FILE (owner=$DB_JOB_OS_USER)"
-
-# ========================
-# GENERATE: innodb_stat.sh
-# ========================
 
 step "Generate innodb_stat script rieng cho tung instance"
 
@@ -238,10 +223,6 @@ EOF
     log "Generated: $INNODB_FILE (owner=$INSTANCE_USER)"
 done
 
-# ========================
-# GENERATE: backup_database_<instance>.sh
-# ========================
-
 step "Generate backup script rieng cho tung instance"
 
 DB_PASS_EFF="${BACKUP_DB_PASS:-${COMMON_PASS}}"
@@ -252,9 +233,9 @@ for id in "${INSTANCE_IDS[@]}"; do
     CONF_FILE="$(get_conf_file "$id")"
     SOCKET=""
 
-    # cluster.env co the da cu trong khi MariaDB dang chay bang my.cnf da render
-    # truoc do. Uu tien socket thuc te trong my.cnf de job backup khong bi tro
-    # nham vao DATA_DIR_PATTERN cu; neu my.cnf chua co thi moi dung fallback.
+    # cluster.env có thể đã cũ trong khi MariaDB đang chạy bằng my.cnf render
+    # trước đó. Ưu tiên socket thực tế trong my.cnf để job backup không trỏ
+    # nhầm vào DATA_DIR_PATTERN cũ; chỉ dùng fallback khi my.cnf chưa có.
     if [ -r "$CONF_FILE" ]; then
         SOCKET="$(awk '
             /^[[:space:]]*socket[[:space:]]*=/ {
@@ -488,10 +469,6 @@ chown "$BACKUP_USER:$BACKUP_GROUP" "$BACKUP_FILE"
 log "Generated: $BACKUP_FILE (owner=$BACKUP_USER, dir=$BACKUP_BASE)"
 done
 
-# ========================
-# GENERATE: auto_analyze.sh
-# ========================
-
 step "Generate auto_analyze.sh"
 
 ANALYZE_FILE="${DB_SCRIPT_DIR}/auto_analyze.sh"
@@ -532,10 +509,6 @@ EOF
 chown "$DB_JOB_OS_USER:$DB_JOB_OS_GROUP" "$ANALYZE_FILE"
 chmod 700 "$ANALYZE_FILE"
 log "Generated: $ANALYZE_FILE (owner=$DB_JOB_OS_USER)"
-
-# ========================
-# GENERATE: rotate_mariadb_log.sh
-# ========================
 
 step "Generate rotate_mariadb_log script rieng cho tung instance"
 
@@ -593,20 +566,17 @@ EOF
     log "Generated: $ROTATE_FILE (owner=$INSTANCE_USER)"
 done
 
-# ========================
-# CHON + CAI CRONTAB (menu chon so)
-# ========================
-# Cac script deu da duoc sinh o tren. Buoc nay chi CHON job nao duoc cam cron.
-# Moi job co MARKER RIENG trong /etc/cron.d -> chay lai 08 chon job khac se CONG DON
-# (khong xoa job da cai). Chon '0' hoac Enter = TAT CA.
-# Cach chon (uu tien tu tren xuong):
-#   - Tham so dong lenh:  ./08_install_db_jobs.sh 1,3
-#   - Bien moi truong:    JOBS=all ./08_install_db_jobs.sh
-#   - Menu tuong tac (khi co TTY)
-#   - Khong TTY + khong chi dinh -> mac dinh 'all' (giu tuong thich pipeline)
+# Các script đã được sinh ở trên; bước này chỉ chọn job nào được cài cron.
+# Mỗi job có marker riêng trong /etc/cron.d nên chạy lại với lựa chọn khác sẽ
+# cộng dồn (không xóa job đã cài). Chọn '0' hoặc Enter = tất cả.
+# Thứ tự ưu tiên cách chọn:
+#   - Tham số dòng lệnh:  ./08_install_db_jobs.sh 1,3
+#   - Biến môi trường:    JOBS=all ./08_install_db_jobs.sh
+#   - Menu tương tác (khi có TTY)
+#   - Không TTY và không chỉ định -> mặc định 'all' (tương thích pipeline)
 
-# Catalog job: key -> nhan | lich cron | role can (bootstrap|all).
-# Tat ca job cai qua /etc/cron.d co cot user; khong ghi job moi vao root crontab.
+# Catalog job: key -> nhãn | lịch cron | role cần (bootstrap|all).
+# Mọi job cài qua /etc/cron.d có cột user; không ghi job mới vào root crontab.
 JOB_ORDER=(partition innodb backup analyze rotate)
 declare -A JOB_LABEL JOB_SCHED JOB_ROLE
 JOB_LABEL[partition]="auto_add_partition"; JOB_SCHED[partition]="0 2 5,10,15,20,25 * *"; JOB_ROLE[partition]="bootstrap"
@@ -618,7 +588,7 @@ JOB_LABEL[rotate]="rotate_mariadb_log";    JOB_SCHED[rotate]="59 23 7,14,21,28 *
 DB_JOBS_CRON_FILE="/etc/cron.d/mariadb_db_jobs"
 
 # install_crond_job <jobkey> <cron-line> [cron-line...]
-# Marker rieng giup chay lai voi lua chon le ma khong xoa cac job da cai.
+# Marker riêng giúp chạy lại với lựa chọn lẻ mà không xóa các job đã cài.
 install_crond_job() {
     local jkey="$1" b e tmp line
     shift
@@ -673,7 +643,7 @@ remove_job_cron() {
     log "  [-] Da go cron cu $jkey khoi user $cuser"
 }
 
-# Migration helpers cho crontab phien ban cu.
+# Hàm hỗ trợ migrate crontab phiên bản cũ.
 purge_old_block() {
     local cuser="$1" tmp
     id "$cuser" >/dev/null 2>&1 || return 0
@@ -717,7 +687,6 @@ remove_raw_root_job_lines() {
     log "  [-] Da go raw root cron line chua: $token"
 }
 
-# ----- Lay lua chon -----
 SEL="${1:-${JOBS:-}}"
 if [ -z "$SEL" ]; then
     if [ -t 0 ]; then
@@ -736,7 +705,6 @@ if [ -z "$SEL" ]; then
 fi
 [ -z "$SEL" ] && SEL="0"
 
-# ----- Parse -> mang WANT -----
 declare -a WANT=()
 case "$SEL" in
     0|all|ALL|a|A) WANT=("${JOB_ORDER[@]}") ;;
@@ -756,8 +724,8 @@ case "$SEL" in
         ;;
 esac
 
-# Neu phat hien cron root cua ban cu, tu dong dua cac job do vao danh sach migrate
-# de khong xoa mat job khi nguoi dung chi chon mot muc khac trong menu.
+# Nếu phát hiện cron root của bản cũ, tự đưa các job đó vào danh sách migrate
+# để không mất job khi người dùng chỉ chọn một mục khác trong menu.
 if [ "$LEGACY_COMBINED_ROOT" = true ]; then
     WANT+=(partition innodb backup analyze rotate)
 fi
@@ -765,7 +733,7 @@ for old_job in partition innodb backup analyze rotate; do
     [ "${LEGACY_ROOT_JOB_PRESENT[$old_job]:-false}" = true ] && WANT+=("$old_job")
 done
 
-# Dedupe WANT sau khi gop lua chon va job legacy can migrate.
+# Loại trùng WANT sau khi gộp lựa chọn và job legacy cần migrate.
 declare -A WANT_SEEN=()
 declare -a WANT_UNIQUE=()
 for j in "${WANT[@]}"; do
@@ -801,21 +769,21 @@ for j in "${WANT[@]}"; do
         FLOCK_BIN="$(command -v flock 2>/dev/null || true)"
         [ -n "$FLOCK_BIN" ] || die "Khong tim thay flock (goi util-linux); can de backup nhieu instance khong chay dong thoi."
 
-        # File lock chung nam trong BACKUP_DIR, root tao san de moi MariaDB OS user
-        # mo duoc. Thu muc cha do root so huu nen cac user khong the xoa lock file.
+        # File lock chung nằm trong BACKUP_DIR, root tạo sẵn để mọi MariaDB OS user
+        # mở được. Thư mục cha do root sở hữu nên các user không thể xóa lock file.
         BACKUP_LOCK="${BACKUP_DIR_EFF}/.mariadb_backup.lock"
         touch "$BACKUP_LOCK"
         chmod 666 "$BACKUP_LOCK"
 
-        # Don cron cua phien ban cu: root + runuser va fix_db_dir_perm.
+        # Dọn cron phiên bản cũ: root + runuser và fix_db_dir_perm.
         remove_job_cron root backup
         if [ -n "$LEGACY_BACKUP_OS_USER" ]; then
             purge_old_block "$LEGACY_BACKUP_OS_USER"
             remove_job_cron "$LEGACY_BACKUP_OS_USER" backup
         fi
 
-        # Khong dung crontab -u: nhieu server chi cho user trong /etc/cron.allow.
-        # /etc/cron.d co cot user nen cron van ha quyen dung MariaDB OS user.
+        # Không dùng crontab -u: nhiều server chỉ cho user trong /etc/cron.allow.
+        # /etc/cron.d có cột user nên cron vẫn hạ quyền đúng MariaDB OS user.
         BACKUP_CRON_FILE="/etc/cron.d/mariadb_backup"
         [ -d /etc/cron.d ] || die "Khong co /etc/cron.d tren he thong."
         cron_tmp="$(mktemp "${BACKUP_CRON_FILE}.tmp.XXXXXX")"
@@ -833,7 +801,7 @@ for j in "${WANT[@]}"; do
             for id in "${INSTANCE_IDS[@]}"; do
                 iuser="${BACKUP_USER_BY_ID[$id]}"
                 bfile="${BACKUP_FILE_BY_ID[$id]}"
-                # Cung lich 23:30; flock xep hang khi co 5-7 instance.
+                # Cùng lịch 23:30; flock xếp hàng khi có 5-7 instance.
                 printf '%s %s "%s" -w 82800 "%s" "%s" > /dev/null 2>&1\n' \
                     "${JOB_SCHED[backup]}" "$iuser" "$FLOCK_BIN" "$BACKUP_LOCK" "$bfile"
             done
@@ -883,8 +851,8 @@ for j in "${WANT[@]}"; do
     install_crond_job "$j" "${cron_lines[@]}"
 done
 
-# Guardrail: khong de sot bat ky job do project sinh trong root crontab hay cot
-# user=root cua /etc/cron.d. Neu con sot thi fail ro rang thay vi bao DONE gia.
+# Chốt chặn: không để sót job do project sinh trong root crontab hay cột
+# user=root của /etc/cron.d. Nếu còn sót thì fail rõ ràng thay vì báo DONE giả.
 ROOT_CRON_FINAL="$(crontab -u root -l 2>/dev/null || true)"
 for j in partition innodb backup analyze rotate; do
     if grep -Fq "${LEGACY_SCRIPT_TOKEN[$j]}" <<< "$ROOT_CRON_FINAL"; then

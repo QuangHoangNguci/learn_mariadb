@@ -1,0 +1,66 @@
+# {{ ansible_managed }}
+[maxscale]
+threads=auto
+skip_name_resolve=1
+admin_secure_gui=false
+admin_port={{ mariadb_maxscale_rest_port }}
+admin_host=127.0.0.1
+
+libdir={{ _ms_lib_modules }}
+logdir=/var/log/maxscale
+datadir=/var/lib/maxscale
+piddir=/run/maxscale
+persistdir=/var/lib/maxscale/maxscale.cnf.d
+
+{# proxy_protocol=true: bắt buộc khi MariaDB có proxy_protocol_networks #}
+{% for ip in mariadb_cluster_nodes %}
+[server_{{ loop.index }}]
+type=server
+proxy_protocol=true
+address={{ ip }}
+port={{ inst.port }}
+protocol=MariaDBBackend
+priority=1
+
+{% endfor %}
+{% set _servers = range(1, mariadb_cluster_nodes | length + 1) | map('string') | map('regex_replace', '^', 'server_') | join(',') %}
+[Galera-Monitor]
+type=monitor
+module=galeramon
+servers={{ _servers }}
+user={{ mariadb_maxscale_user }}
+password={{ inst.maxscale_pass }}
+monitor_interval=2s
+disable_master_failback=1
+available_when_donor=1
+
+{% if inst.max_rw | int > 0 %}
+[Read-Write-Service]
+type=service
+router=readwritesplit
+servers={{ _servers }}
+user={{ mariadb_maxscale_user }}
+password={{ inst.maxscale_pass }}
+
+[Read-Write-Listener]
+type=listener
+service=Read-Write-Service
+protocol=MariaDBClient
+port={{ inst.max_rw }}
+
+{% endif %}
+{% if inst.max_ro | int > 0 %}
+[Read-Only-Service]
+type=service
+router=readconnroute
+router_options=synced
+servers={{ _servers }}
+user={{ mariadb_maxscale_user }}
+password={{ inst.maxscale_pass }}
+
+[Read-Only-Listener]
+type=listener
+service=Read-Only-Service
+protocol=MariaDBClient
+port={{ inst.max_ro }}
+{% endif %}

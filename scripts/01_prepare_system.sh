@@ -18,9 +18,7 @@ SYSCTL_FILE="/etc/sysctl.d/99-mariadb-tuning.conf"
 
 MODE="${INSTALL_MODE:-fresh}"
 
-# ========================
-# DETECT OS
-# ========================
+# Phát hiện hệ điều hành
 
 if grep -qi ubuntu /etc/os-release; then
     OS="ubuntu"
@@ -31,12 +29,9 @@ else
 fi
 log "Detected OS: $OS"
 
-# ========================
-# FRESH MODE: HOI TRUOC KHI STOP MARIADB CUA OS
-# ========================
-
+# Fresh mode: hỏi xác nhận trước khi dừng/gỡ MariaDB của OS
 if [ "$MODE" == "fresh" ]; then
-    # Phat hien MariaDB/MySQL cua OS dang chay
+    # Tìm MariaDB/MySQL của OS đang chạy
     OS_DB_ACTIVE=""
     for svc in mariadb mysql mysqld; do
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
@@ -69,9 +64,7 @@ else
     log "Expand mode -> bo qua clean MySQL conflict de bao ve instance dang chay"
 fi
 
-# ========================
-# REMOVE UFW (Ubuntu)
-# ========================
+# Gỡ ufw (Ubuntu) để dùng iptables trực tiếp
 
 if [ "$OS" = "ubuntu" ]; then
     if dpkg -l 2>/dev/null | grep -q "^ii  ufw"; then
@@ -83,10 +76,7 @@ if [ "$OS" = "ubuntu" ]; then
     fi
 fi
 
-# ========================
-# INSTALL LOCAL PACKAGES
-# ========================
-
+# Cài các gói .deb offline
 install_packages() {
     [ -d "$PACKAGE_DIR" ] || { warn "Khong tim thay $PACKAGE_DIR -> bo qua dpkg"; return 0; }
     ls "$PACKAGE_DIR"/*.deb >/dev/null 2>&1 || { warn "Khong co .deb trong $PACKAGE_DIR -> bo qua"; return 0; }
@@ -100,13 +90,12 @@ install_packages() {
 
     log "Cai package offline tu $PACKAGE_DIR"
 
-    # Loai bo cac goi co the conflict voi he thong da co MySQL
+    # Bỏ các gói dễ xung đột với MySQL/MariaDB đã có trên máy
     local skip_regex='mysql-common|mariadb-common|libmariadb3'
     mapfile -t DEB_FILES < <(ls "$PACKAGE_DIR"/*.deb 2>/dev/null | grep -Ev "/($skip_regex)")
     [ "${#DEB_FILES[@]}" -gt 0 ] || die "Khong co .deb hop le sau khi loc skip-list"
 
-    # Cai theo che do TOLERANT: loi tung goi -> warn, KHONG die.
-    # Sau do verify cac thu CRITICAL (jemalloc, numactl) - thieu thi moi die.
+    # Cài kiểu chịu lỗi: gói lỗi chỉ warn; sau đó kiểm tra gói critical, thiếu mới die
     set +e
     local dpkg_out
     dpkg_out=$(dpkg -i "${DEB_FILES[@]}" 2>&1)
@@ -116,7 +105,7 @@ install_packages() {
     echo "$dpkg_out" | tee -a "$LOG_FILE_CLUSTER" >/dev/null
 
     if [ "$dpkg_rc" -ne 0 ]; then
-        # Trich ten cac goi bi loi tu output dpkg
+        # Lấy tên gói lỗi từ output dpkg
         local failed_pkgs
         failed_pkgs=$(echo "$dpkg_out" | grep -E "Errors were encountered while processing:" -A 50 \
                       | tail -n +2 | sed 's|^ */.*/||; s/\.deb$//' \
@@ -131,19 +120,15 @@ install_packages() {
             warn "  (khong trich xuat duoc, xem log o tren)"
         fi
 
-        # Co gang fix dependency neu co
+        # Thử sửa dependency
         dpkg --configure -a 2>&1 | tee -a "$LOG_FILE_CLUSTER" >/dev/null || true
     else
         dpkg --configure -a
         log "Cai dat package thanh cong (${#DEB_FILES[@]} goi)"
     fi
 
-    # ========================
-    # VERIFY CRITICAL DEPS
-    # MariaDB binary phai co jemalloc (LD_PRELOAD) + numactl (ExecStart wrap)
-    # Cac thu khac (iptables-persistent, keepalived, libmicrohttpd...) khong
-    # critical cho pipeline 01..05 - co the cai sau khi can.
-    # ========================
+    # Kiểm tra gói bắt buộc: jemalloc (LD_PRELOAD), numactl (ExecStart), iptables.
+    # Các gói khác không critical cho bước 01..05.
     local critical_missing=0
     if ! ldconfig -p | grep -q jemalloc; then
         error "CRITICAL: jemalloc khong tim thay - MariaDB se khong start duoc voi LD_PRELOAD"
@@ -169,10 +154,7 @@ install_packages() {
 
 install_packages
 
-# ========================
-# CLEAN DUP IPTABLES + APPLY RULES
-# ========================
-
+# Xóa rule iptables trùng, rồi thêm rule mới
 iptables-save | awk '
 /^COMMIT$/ { delete x; }
 !x[$0]++
@@ -196,7 +178,7 @@ if [ -n "${MGMT_NODES:-}" ]; then
     done
 fi
 
-# PRIMARY_NODES: cho phep primary keo binlog (replication tu DR -> primary, hoac nguoc lai)
+# PRIMARY_NODES: cho phép replication binlog giữa primary và DR
 if [ -n "${PRIMARY_NODES:-}" ]; then
     for NODE in $PRIMARY_NODES; do
         apply_rule "INPUT  -s $NODE -j ACCEPT"
@@ -204,11 +186,10 @@ if [ -n "${PRIMARY_NODES:-}" ]; then
     done
 fi
 
-# GALERA: ACCEPT WSREP listen/SST/IST giua cac node trong CLUSTER_NODES
+# Galera: cho phép WSREP/SST/IST giữa các node
 if is_galera_enabled; then
     log "Galera enabled -> mo iptables WSREP ports cho CLUSTER_NODES"
     for NODE in $CLUSTER_NODES; do
-        # Cho phep tat ca traffic giua cac node trong cluster (don gian, an toan)
         apply_rule "INPUT  -s $NODE -j ACCEPT"
         apply_rule "OUTPUT -d $NODE -j ACCEPT"
     done
@@ -217,9 +198,7 @@ fi
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
 
-# ========================
-# SYSCTL
-# ========================
+# Tinh chỉnh kernel (sysctl) theo RAM/CPU
 
 RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
 CPU=$(nproc)
@@ -240,13 +219,10 @@ EOF
 
 sysctl -p "$SYSCTL_FILE"
 
-# ========================
-# LIMITS (per-user, khop voi open_files_limit trong my_<ID>.cnf)
-# ========================
-
+# Giới hạn nofile theo user (khớp open_files_limit trong my.cnf)
 NOFILE="${MAX_OPEN_FILES:-1000000}"
 
-# Xoa entry cua chinh ta truoc (mariadb HOAC mariadb_<so>), giu nguyen DB cu khac
+# Xóa entry cũ của mariadb/mariadb_<số>, giữ nguyên user khác
 sed -i "/^${INSTANCE_NAME_PREFIX:-mariadb}\(_[0-9]\+\)\?[[:space:]]/d" /etc/security/limits.conf
 
 {
@@ -257,9 +233,7 @@ sed -i "/^${INSTANCE_NAME_PREFIX:-mariadb}\(_[0-9]\+\)\?[[:space:]]/d" /etc/secu
     done
 } >> /etc/security/limits.conf
 
-# ========================
-# THP DISABLE
-# ========================
+# Tắt Transparent Huge Pages
 
 if [ "${ENABLE_THP_DISABLE:-false}" == "true" ]; then
     log "Disable Transparent Huge Pages (THP)..."
@@ -289,9 +263,7 @@ THPEOF
     fi
 fi
 
-# ========================
-# NUMA - DISABLE ZONE RECLAIM
-# ========================
+# NUMA: tắt zone reclaim
 
 if [ "${ENABLE_NUMA_DISABLE:-false}" == "true" ]; then
     log "Set vm.zone_reclaim_mode=0 cho database workload"

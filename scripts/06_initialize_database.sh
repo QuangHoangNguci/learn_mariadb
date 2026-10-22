@@ -1,23 +1,22 @@
 #!/bin/bash
 
-# Import schema vsystem + users vao moi instance.
-# CHAY TAY (khong nam trong deploy.sh pipeline).
+# Import schema vsystem + users vào mỗi instance.
+# Chạy tay (không nằm trong pipeline deploy.sh).
 #
-# Cach hoat dong:
-#   1) Start mariadbd tam (skip-networking, wsrep_on=OFF) qua socket
-#   2) Import vsystem.sql + users.sql (sed thay placeholder pass)
-#   3) Set root password
+# Cách hoạt động:
+#   1) Start mariadbd tạm (skip-networking, wsrep_on=OFF) qua socket
+#   2) Import vsystem.sql + users.sql (sed thay placeholder mật khẩu)
+#   3) Đặt mật khẩu root
 #   4) SHUTDOWN
 #
-# Galera flow:
-#   - Bootstrap node: chay 06 SAU 05, TRUOC galera_new_cluster.
-#     Khi galera_new_cluster start, cluster da co user galera_<ID>
-#     -> joiner SST duoc.
-#   - Joiner node: KHONG chay 06. User se sync qua Galera replication.
+# Galera:
+#   - Node bootstrap: chạy 06 sau 05, trước galera_new_cluster.
+#     Cluster đã có user galera_<ID> nên joiner SST được.
+#   - Node joiner: không chạy 06, user được sync qua Galera replication.
 #
 # EMPTY_CLUSTER=true:
-#   Chi set root password, KHONG import schema + users.
-#   Dung khi data se den tu cum cu qua mariabackup restore.
+#   Chỉ đặt mật khẩu root, không import schema + users.
+#   Dùng khi data đến từ cụm cũ qua mariabackup restore.
 
 set -euo pipefail
 
@@ -43,21 +42,21 @@ if [ "${EMPTY_CLUSTER:-false}" = "true" ]; then
     log "EMPTY_CLUSTER=true: chi set root pass, SKIP schema + users import"
 fi
 
-# Replica/DR: data + users se den tu primary qua async replication.
-# Import users/schema o day de TRUNG voi du lieu replicate -> khuyen nghi EMPTY_CLUSTER=true.
+# Replica/DR: data + users đến từ primary qua async replication,
+# import ở đây dễ trùng -> nên dùng EMPTY_CLUSTER=true.
 if is_replica && [ "${EMPTY_CLUSTER:-false}" != "true" ]; then
     warn "TOPOLOGY=$TOPOLOGY (replica): import schema+users co the TRUNG voi data replicate tu primary."
     warn "  Khuyen nghi dat EMPTY_CLUSTER=true (chi set root pass) cho node DR."
     confirm "Van tiep tuc import day du schema + users?" || die "Huy. Dat EMPTY_CLUSTER=true roi chay lai."
 fi
 
-# Galera joiner: tu choi chay (data se sync tu bootstrap, khong duoc dong vao)
+# Joiner: từ chối chạy vì data sẽ sync từ bootstrap, không được can thiệp
 if is_galera_enabled && [ "${NODE_ROLE:-bootstrap}" = "joiner" ]; then
     die "Galera joiner KHONG duoc chay 06. Schema + users se sync tu bootstrap qua SST."
 fi
 
-# Escape password/user values first for an SQL string literal, then for the
-# replacement side of sed. This keeps quotes, backslashes, '&' and '|' intact.
+# Escape giá trị cho SQL string literal trước, rồi cho vế thay thế của sed,
+# để giữ nguyên dấu nháy, backslash, '&' và '|'.
 sql_literal_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e "s/'/''/g"
 }
@@ -87,10 +86,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ========================
-# LOOP INSTANCE
-# ========================
-
 for id in "${INSTANCE_IDS[@]}"; do
 
     log "===== INIT DATA INSTANCE $id ====="
@@ -112,7 +107,7 @@ for id in "${INSTANCE_IDS[@]}"; do
         continue
     fi
 
-    # Galera: neu instance da tung join cluster (co grastate.dat) -> khong dong vao
+    # Đã từng join cluster (có grastate.dat) thì không đụng vào
     if is_galera_enabled && [ -f "$DATA_DIR/grastate.dat" ]; then
         log "Instance $id: grastate.dat ton tai -> da tham gia cluster, skip"
         continue
@@ -127,14 +122,9 @@ for id in "${INSTANCE_IDS[@]}"; do
         fi
     fi
 
-    # ------------------------
-    # CLEAN OLD SOCKET + LOG
-    # ------------------------
     rm -f "$SOCKET" "${DATA_DIR}/init.error.log"
 
-    # ------------------------
-    # START TEMP DB (wsrep=OFF, skip-networking)
-    # ------------------------
+    # Start DB tạm: wsrep=OFF, skip-networking để không ảnh hưởng cluster
     log "Starting instance $id in standalone safe-mode (wsrep=OFF, skip-networking)"
 
     "$MYSQLD" \
@@ -149,7 +139,7 @@ for id in "${INSTANCE_IDS[@]}"; do
     PID=$!
     TEMP_PIDS+=("$PID")
 
-    # Wait ready (max 90s)
+    # Chờ sẵn sàng (tối đa 90s)
     READY=0
     for t in {1..45}; do
         if "$MYSQL_BIN" -u root -S "$SOCKET" -e "SELECT 1" >/dev/null 2>&1; then
@@ -163,12 +153,9 @@ for id in "${INSTANCE_IDS[@]}"; do
         die "Instance $id failed to start. Kiem tra ${DATA_DIR}/init.error.log"
     fi
 
-    # ------------------------
-    # IMPORT SCHEMA + USERS (skip khi EMPTY_CLUSTER)
-    # ------------------------
+    # Bỏ qua import khi EMPTY_CLUSTER
     if [ "${EMPTY_CLUSTER:-false}" != "true" ]; then
 
-        # Schema vsystem
         EXISTS=$("$MYSQL_BIN" -u root -S "$SOCKET" -Nse "SHOW DATABASES LIKE 'vsystem';" || true)
         if [ "$EXISTS" = "vsystem" ]; then
             log "Schema vsystem da ton tai trong instance $id -> skip schema import"
@@ -181,7 +168,7 @@ for id in "${INSTANCE_IDS[@]}"; do
             fi
         fi
 
-        # Users (luon chay - users.sql dung CREATE USER IF NOT EXISTS)
+        # Luôn chạy vì users.sql dùng CREATE USER IF NOT EXISTS
         if [ -f "$USER_FILE" ]; then
             GALERA_USER="${GALERA_USER_PREFIX:-galera}"
             GALERA_PASS_FOR_INSTANCE="$(get_instance_galera_pass "$id")"
@@ -212,9 +199,7 @@ for id in "${INSTANCE_IDS[@]}"; do
         fi
     fi
 
-    # ------------------------
-    # SET ROOT PASSWORD (luon chay)
-    # ------------------------
+    # Đặt mật khẩu root (luôn chạy)
     log "Set root@localhost password..."
     ADMIN_PASS_SQL="$(sql_literal_escape "$ADMIN_PASS")"
     "$MYSQL_BIN" -u root -S "$SOCKET" <<EOF
@@ -222,15 +207,12 @@ ALTER USER 'root'@'localhost' IDENTIFIED BY '${ADMIN_PASS_SQL}';
 FLUSH PRIVILEGES;
 EOF
 
-    # ------------------------
-    # SHUTDOWN
-    # ------------------------
     log "Stopping instance $id safe-mode..."
     MYSQL_PWD="${ADMIN_PASS}" "$MYSQL_BIN" -u root -S "$SOCKET" -e "SHUTDOWN;" 2>/dev/null || true
 
     sleep 2
 
-    # Xoa PID khoi danh sach theo doi
+    # Bỏ PID khỏi danh sách theo dõi của cleanup
     NEW_PIDS=()
     for p in "${TEMP_PIDS[@]:-}"; do
         [ "$p" != "$PID" ] && NEW_PIDS+=("$p")

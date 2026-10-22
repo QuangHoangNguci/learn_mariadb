@@ -10,19 +10,15 @@ source ./common.sh
 check_root
 log "===== START INSTALL MAXSCALE (MULTI INSTANCE) ====="
 
-# ========================
-# CHECK ENABLE
-# ========================
-
 if [ "${ENABLE_MAXSCALE:-false}" != "true" ]; then
     log "ENABLE_MAXSCALE is not true -> skipping MaxScale installation."
     exit 0
 fi
 
-# Populate INSTANCE_IDS, INSTANCE_PORT, INSTANCE_MAX_RW, INSTANCE_MAX_RO
+# Nạp INSTANCE_IDS, INSTANCE_PORT, INSTANCE_MAX_RW, INSTANCE_MAX_RO
 validate_cluster_env
 
-# Galera bat buoc cho MaxScale (cau truc topology backend dua tren CLUSTER_NODES)
+# MaxScale bắt buộc có Galera (backend lấy từ CLUSTER_NODES)
 if ! is_galera_enabled; then
     die "ENABLE_MAXSCALE=true yeu cau ENABLE_GALERA=true (MaxScale routing den Galera cluster)"
 fi
@@ -36,17 +32,13 @@ NODE_PKG_DIR="$BASE_DIR/package/nodejs"
 
 INSTALL_DIR="/usr/local/maxscale"
 
-# MaxScale-specific defaults (co the override trong cluster.env)
+# Giá trị mặc định, có thể ghi đè trong cluster.env
 MAXSCALE_USER="${MAXSCALE_USER:-maxscale}"
 MAXSCALE_REST_BASE_PORT="${MAXSCALE_REST_BASE_PORT:-8989}"
 
 MODE="${INSTALL_MODE:-fresh}"
 log "Installation Mode: $MODE"
 log "MaxScale instances: ${INSTANCE_IDS[*]}"
-
-# ========================
-# USER SETUP
-# ========================
 
 step "Ensure maxscale user"
 if id "maxscale" &>/dev/null; then
@@ -55,10 +47,6 @@ else
     useradd -r -s /bin/false maxscale
     log "Created user maxscale"
 fi
-
-# ========================
-# INSTALL NODEJS (OFFLINE)
-# ========================
 
 step "Install NodeJS (offline)"
 if command -v node &>/dev/null; then
@@ -87,20 +75,15 @@ else
     fi
 fi
 
-# ========================
-# PREPARE MAXSCALE GLOBAL DIRECTORIES
-# MaxScale luon tim /var/lib/maxscale/maxscale.cnf.d khi khoi dong
-# Neu khong tao truoc, se gay warning hoac loi permission
-# ========================
-
+# MaxScale luôn tìm /var/lib/maxscale/maxscale.cnf.d khi khởi động;
+# không tạo trước sẽ gây cảnh báo hoặc lỗi quyền.
 step "Prepare MaxScale global directories"
 mkdir -p /var/lib/maxscale/maxscale.cnf.d
 mkdir -p /etc/maxscale.modules.d
 chown -R maxscale:maxscale /var/lib/maxscale
 chown -R maxscale:maxscale /etc/maxscale.modules.d
 
-# Mo bit traverse cho parent (/var, /var/lib) phong khi server da co setup
-# khac lam restrictive (drwxr-x---). Idempotent va an toan.
+# Mở quyền traverse (o+x) cho thư mục cha phòng khi server siết quyền (drwxr-x---).
 ensure_parents_traversable_global() {
     local p="$1"
     while [ "$p" != "/" ] && [ -n "$p" ]; do
@@ -111,15 +94,10 @@ ensure_parents_traversable_global() {
 ensure_parents_traversable_global /var/lib/maxscale
 ensure_parents_traversable_global /etc/maxscale.modules.d
 
-# ========================
-# DETECT PACKAGE FORMAT
-# ========================
-#
-# Tu dong chon kieu cai theo file trong $PKG_DIR:
-#   *.deb       -> dpkg -i (Ubuntu/Debian native)
-#   *.tar.gz    -> extract /usr/local/maxscale (portable)
-#
-# Force kieu cai bang env var MAXSCALE_PACKAGE_TYPE=deb|tar trong cluster.env.
+# Tự chọn kiểu cài theo file trong $PKG_DIR:
+#   *.deb    -> dpkg -i
+#   *.tar.gz -> giải nén vào /usr/local/maxscale
+# Ép kiểu bằng MAXSCALE_PACKAGE_TYPE=deb|tar trong cluster.env.
 
 step "Detect MaxScale package format"
 
@@ -150,36 +128,27 @@ case "$MAXSCALE_PKG_TYPE" in
         ;;
 esac
 
-# ========================
-# INSTALL MAXSCALE
-# ========================
-
 if [ -n "$DEB_FILE" ]; then
     step "Install MaxScale (.deb)"
     if dpkg -l maxscale 2>/dev/null | awk '/^ii/ {found=1} END {exit !found}'; then
         log "MaxScale package da cai dat (dpkg) -> skip"
     else
-        # OFFLINE strategy: cai TAT CA *.deb trong PKG_DIR cung mot lan.
-        # dpkg tu sap xep thu tu install va resolve deps neu day du.
-        # Yeu cau: user phai bundle ca deps (nodejs, libboost-serialization,
-        # libmemcached11t64, libmicrohttpd12t64, librdkafka++1, libtbb12...)
-        # vao package/maxscale/.
+        # Offline: cài tất cả *.deb trong PKG_DIR một lần, dpkg tự xử lý thứ tự/deps.
+        # Yêu cầu bundle đủ deps (nodejs, libboost-serialization, libmemcached11t64,
+        # libmicrohttpd12t64, librdkafka++1, libtbb12...) vào package/maxscale/.
         DEB_COUNT=$(ls "$PKG_DIR"/*.deb 2>/dev/null | wc -l)
         log "Installing $DEB_COUNT .deb file(s) tu $PKG_DIR (offline mode)..."
 
-        # Cai 1 lan tat ca - dpkg tu resolve deps giua cac file .deb cung dir.
-        # Khong fail ngay neu loi: thu apt -f fix truoc khi gia ket luan.
+        # Không fail ngay nếu lỗi: thử apt -f trước khi kết luận.
         DPKG_OUT=$(DEBIAN_FRONTEND=noninteractive dpkg -i "$PKG_DIR"/*.deb 2>&1) \
             || warn "dpkg -i co loi, se thu apt-get -f install..."
 
-        # apt-get -f install: dpkg thi cai 1 chieu, apt biet resolve theo
-        # graph deps. Tren server offline khong co repo -> chi giup neu
-        # cac deps con thieu DA SAN trong apt cache (vd /var/cache/apt/archives).
+        # Server offline không có repo -> apt -f chỉ giúp được nếu deps thiếu
+        # đã có sẵn trong apt cache (vd /var/cache/apt/archives).
         if ! dpkg -l maxscale 2>/dev/null | awk '/^ii/ {found=1} END {exit !found}'; then
             DEBIAN_FRONTEND=noninteractive apt-get install -f -y 2>&1 || true
         fi
 
-        # Verify lan cuoi
         if ! dpkg -l maxscale 2>/dev/null | awk '/^ii/ {found=1} END {exit !found}'; then
             warn "==============================================="
             warn "MaxScale CHUA cai duoc. Thieu dependencies."
@@ -200,16 +169,14 @@ if [ -n "$DEB_FILE" ]; then
         log "MaxScale installed via dpkg"
     fi
 
-    # .deb mac dinh enable + start /lib/systemd/system/maxscale.service voi cau hinh
-    # default /etc/maxscale.cnf -> conflict voi per-instance service ta sinh sau.
-    # Disable + stop default service de tranh chiem port mac dinh (8989, 3306, ...).
+    # .deb mặc định enable + start maxscale.service với /etc/maxscale.cnf -> xung đột
+    # với service theo từng instance sinh sau; tắt đi để khỏi chiếm port mặc định.
     if systemctl is-enabled maxscale >/dev/null 2>&1 || systemctl is-active maxscale >/dev/null 2>&1; then
         log "Disable + stop default maxscale.service (se thay bang maxscale_<i>.service)"
         systemctl stop maxscale 2>/dev/null || true
         systemctl disable maxscale 2>/dev/null || true
     fi
 
-    # .deb dat binary o /usr/bin va lib o /usr/lib/x86_64-linux-gnu
     MAXSCALE_BIN="/usr/bin/maxscale"
     MAXCTRL_BIN="/usr/bin/maxctrl"
     LIB_BASE_DIR="/usr/lib/x86_64-linux-gnu"
@@ -235,24 +202,16 @@ else
         log "MaxScale extracted to $INSTALL_DIR"
     fi
 
-    # Dam bao maxscale user co the chdir vao $INSTALL_DIR (systemd WorkingDirectory)
-    # va doc binary/lib/module ben trong.
-    #
-    # Tar extract co the giu nguyen umask cua may build (vd umask 077 -> mode 700).
-    # Maxscale chay duoi User=maxscale (KHONG phai owner=root) -> can 'others' co rx.
-    #
-    # chmod -R go+rX:
-    #   - g (group) + o (others) get +r (read)
-    #   - X (chu hoa): chi them x cho directory, KHONG them x cho file thuong
-    #     -> file binary van executable (vi da co u+x), file thuong khong bi them x
-    #   - Recursive: ap dung cho moi subdir + file (bin, lib, modules, ...)
+    # Tar có thể giữ umask của máy build (vd 077 -> mode 700), mà MaxScale chạy
+    # bằng User=maxscale (không phải root) nên 'others' cần rx để chdir và đọc bin/lib.
+    # X (hoa) chỉ thêm x cho thư mục, không thêm x cho file thường.
     chmod -R go+rX "$INSTALL_DIR" 2>/dev/null || true
     ensure_parents_traversable_global "$INSTALL_DIR"
 
     MAXSCALE_BIN=$(find "$INSTALL_DIR" -type f -name maxscale | grep /bin/ | head -n1)
     MAXCTRL_BIN="$(dirname "$MAXSCALE_BIN")/maxctrl"
 
-    # Thiet lap duong dan thu vien cho LD_LIBRARY_PATH
+    # Đường dẫn thư viện cho LD_LIBRARY_PATH
     LIB_BASE_DIR="$(dirname "$(dirname "$MAXSCALE_BIN")")/lib/x86_64-linux-gnu"
     LIB_MODULES_DIR="${LIB_BASE_DIR}/maxscale"
 
@@ -263,21 +222,12 @@ fi
 log "Using MaxScale binary: $MAXSCALE_BIN"
 log "Using modules dir:    $LIB_MODULES_DIR"
 
-# ========================
-# CLUSTER NODES PARSE
-# ========================
-
 read -ra NODES <<< "$CLUSTER_NODES"
 log "Detected ${#NODES[@]} database nodes"
 
-# ========================
-# LOOP INSTANCE CONFIGURATION
-# ========================
-
 declare -a NEW_INSTANCES=()
 
-# Helper: chmod o+x parent dir tu leaf len / de systemd CHDIR khong fail
-# tren server hardened (/var, /var/lib co the la 750).
+# chmod o+x các thư mục cha để systemd chdir không fail trên server siết quyền (/var, /var/lib = 750).
 ensure_parents_traversable() {
     local p="$1"
     while [ "$p" != "/" ] && [ -n "$p" ]; do
@@ -286,10 +236,8 @@ ensure_parents_traversable() {
     done
 }
 
-# Sinh lenh tien loi theo ID:
-#   ID=0 -> maxctrl
-#   ID=1 -> maxctrl1, ID=2 -> maxctrl2, ...
-# Wrapper chi them REST host mac dinh neu nguoi dung chua truyen -h/--hosts.
+# Sinh lệnh tiện lợi theo ID: ID=0 -> maxctrl, ID>=1 -> maxctrl<ID>.
+# Wrapper chỉ thêm REST host mặc định nếu người dùng chưa truyền -h/--hosts.
 create_maxctrl_wrapper() {
     local id="$1" rest_port="$2" command_name wrapper_file
     if [ "$id" = "0" ]; then
@@ -320,7 +268,7 @@ for id in "${INSTANCE_IDS[@]}"; do
     RW_PORT="${INSTANCE_MAX_RW[$id]}"
     RO_PORT="${INSTANCE_MAX_RO[$id]}"
 
-    # Skip neu khong listener nao bat (MAX_RW=0 va MAX_RO=0)
+    # Bỏ qua nếu không bật listener nào
     if [ "$RW_PORT" = "0" ] && [ "$RO_PORT" = "0" ]; then
         log "Instance $id: MAX_RW=0 va MAX_RO=0 -> bo qua MaxScale instance"
         continue
@@ -332,18 +280,15 @@ for id in "${INSTANCE_IDS[@]}"; do
 
     step "Configuring MaxScale Instance $id (DB=$DB_PORT RW=$RW_PORT RO=$RO_PORT)"
 
-    # ID=0 -> khong hau to (ten MAC DINH: maxscale.service, /etc/maxscale.cnf),
-    # giong quy uoc MariaDB. ID>=1 -> "_<ID>".
+    # ID=0 -> không hậu tố (tên mặc định, giống quy ước MariaDB); ID>=1 -> "_<ID>".
     SFX="$(id_suffix "$id")"
-    # OID: chen vao ten object noi bo trong .cnf (server<OID>_<idx>, Galera-Monitor<SFX>...)
-    # id=0 -> rong (server_1, Galera-Monitor); id>=1 -> giu so (server1_1, Galera-Monitor_1).
+    # OID: chèn vào tên object trong .cnf; id=0 -> rỗng (server_1), id>=1 -> giữ số (server1_1).
     OID=""; [ "$id" != "0" ] && OID="$id"
     CONFIG_FILE="/etc/maxscale${SFX}.cnf"
     SERVICE_FILE="/etc/systemd/system/maxscale${SFX}.service"
     SERVICE_NAME="maxscale${SFX}"
 
-    # REST admin port: ID=0 -> MAXSCALE_REST_BASE_PORT + 1 (vd base 1800 -> 1801);
-    # ID>=1 -> MAXSCALE_REST_BASE_PORT + ID. maxctrl can --hosts=127.0.0.1:<port>.
+    # Port REST admin: ID=0 -> BASE+1 (vd 1800 -> 1801); ID>=1 -> BASE+ID.
     if [ "$id" = "0" ]; then
         REST_API_PORT=$((MAXSCALE_REST_BASE_PORT + 1))
     else
@@ -352,12 +297,10 @@ for id in "${INSTANCE_IDS[@]}"; do
 
     create_maxctrl_wrapper "$id" "$REST_API_PORT"
     if [ "$id" = "0" ]; then
-        rm -f /etc/profile.d/maxctrl.sh   # don alias cu neu lan truoc da tao
+        rm -f /etc/profile.d/maxctrl.sh   # dọn alias cũ
     fi
 
-    # ------------------------
-    # EXPAND SAFE CHECK
-    # ------------------------
+    # Mode expand: không ghi đè instance đang chạy
     if [ -f "$CONFIG_FILE" ] || [ -f "$SERVICE_FILE" ]; then
         if [ "$MODE" == "fresh" ]; then
             warn "Instance $id already has config! Overwriting..."
@@ -370,9 +313,7 @@ for id in "${INSTANCE_IDS[@]}"; do
 
     NEW_INSTANCES+=("$id")
 
-    # ------------------------
-    # ISOLATE DIRECTORIES (per-instance, KHONG dung chung)
-    # ------------------------
+    # Thư mục riêng cho từng instance, không dùng chung
     LOG_DIR="/var/log/maxscale${SFX}"
     DATA_DIR="/var/lib/maxscale${SFX}"
     RUN_DIR="/run/maxscale${SFX}"
@@ -387,11 +328,8 @@ for id in "${INSTANCE_IDS[@]}"; do
     ensure_parents_traversable "$DATA_DIR"
     ensure_parents_traversable "$RUN_DIR"
 
-    # ------------------------
-    # BUILD SERVER BLOCK
-    # proxy_protocol=true theo tai lieu section 8.4 (bat buoc khi MariaDB
-    # co proxy_protocol_networks - thieu se bi reject connection)
-    # ------------------------
+    # proxy_protocol=true theo tài liệu mục 8.4: bắt buộc khi MariaDB có
+    # proxy_protocol_networks, thiếu sẽ bị từ chối kết nối.
     SERVER_BLOCK=""
     SERVER_LIST=""
     idx=1
@@ -410,9 +348,7 @@ priority=1
     done
     SERVER_LIST=${SERVER_LIST%,}
 
-    # ------------------------
-    # BUILD LISTENER BLOCKS (chi sinh khi port != 0)
-    # ------------------------
+    # Chỉ sinh service/listener khi port != 0
     RW_SERVICE_BLOCK=""
     RW_LISTENER_BLOCK=""
     if [ "$RW_PORT" != "0" ]; then
@@ -454,9 +390,6 @@ port=${RO_PORT}
 "
     fi
 
-    # ------------------------
-    # GENERATE CONFIG
-    # ------------------------
     log "Generating $CONFIG_FILE..."
     cat > "$CONFIG_FILE" <<EOF
 [maxscale]
@@ -489,9 +422,6 @@ EOF
     chown maxscale:maxscale "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 
-    # ------------------------
-    # GENERATE SYSTEMD
-    # ------------------------
     log "Generating systemd service for instance $id..."
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -527,10 +457,6 @@ EOF
 
 done
 
-# ========================
-# RELOAD + ENABLE & INIT USERS
-# ========================
-
 step "Reload systemd and initialize instances"
 systemctl daemon-reload
 
@@ -552,19 +478,17 @@ for id in "${NEW_INSTANCES[@]}"; do
         REST_API_PORT=$((MAXSCALE_REST_BASE_PORT + id))
     fi
 
-    # 1. Enable & Start Service
     systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
     systemctl restart "$SERVICE_NAME"
     log "Starting $SERVICE_NAME and waiting for REST API (Port $REST_API_PORT)..."
 
-    # 2. [KIEM TRA CHET LAM SANG] Cho 3 giay xem service co sap ngay khong
+    # Chờ 3 giây xem service có chết ngay sau khi khởi động không
     sleep 3
     if ! systemctl is-active --quiet "$SERVICE_NAME"; then
         die "Service $SERVICE_NAME FAILED to start! Check logs: tail -n 30 /var/log/maxscale${SFX}/maxscale.log"
     fi
 
-    # 3. [KIEM TRA THONG CONG] Cho toi da 30 giay de chac chan cong da mo
-    #    (maxscale connect 3 backend + galera monitor co the >10s moi mo REST).
+    # Chờ tối đa 30 giây cho port REST mở (kết nối backend + galera monitor có thể >10s).
     READY=0
     for t in {1..30}; do
         if ss -tln | grep -q ":${REST_API_PORT} "; then
@@ -578,10 +502,9 @@ for id in "${NEW_INSTANCES[@]}"; do
         die "Service is running but Port $REST_API_PORT is NOT open! Check logs immediately!"
     fi
 
-    # 4. [TAO USER AN TOAN] Bat dung benh cua lenh maxctrl
     log "Initializing admin user for Instance $id..."
 
-    # Tam tat che do exit on error cua bash de hung output cua maxctrl
+    # Tạm tắt set -e để bắt output và mã thoát của maxctrl
     set +e
     INIT_OUT=$("$MAXCTRL_BIN" -h 127.0.0.1:${REST_API_PORT} create user admin "${MAXSCALE_PASS_FOR_INSTANCE}" --type=admin 2>&1)
     INIT_STATUS=$?
@@ -590,7 +513,7 @@ for id in "${NEW_INSTANCES[@]}"; do
     if [ $INIT_STATUS -eq 0 ]; then
         log "Admin user created successfully for Instance $id."
     else
-        # Boc tach loi: Neu dung la trung thi bo qua, neu loi khac thi bao dong
+        # Trùng user thì bỏ qua, lỗi khác thì dừng
         if echo "$INIT_OUT" | grep -qi "Duplicate username"; then
             log "Admin user already exists for Instance $id -> Skipping."
         else

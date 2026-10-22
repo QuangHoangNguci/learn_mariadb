@@ -10,12 +10,8 @@ source ./common.sh
 check_root
 log "===== START INSTALL VECTOR SERVICE (MULTI INSTANCE) ====="
 
-# Populate INSTANCE_IDS... tu cau hinh instance
+# Nạp INSTANCE_IDS từ cấu hình instance
 validate_cluster_env
-
-# ========================
-# PATH SETUP
-# ========================
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VECTOR_SRC_DIR="${BASE_DIR}/setup/mariadb/Install_Mariadb/scripts_vector"
@@ -32,7 +28,7 @@ VECTOR_USER="${VECTOR_OS_USER:-vector_mariadb}"
 VECTOR_GROUP="${VECTOR_OS_GROUP:-vector_mariadb}"
 MARIADB_LOG_GROUP="${MARIADB_LOG_GROUP:-mariadb_log_readers}"
 
-# Vector chi can doc MariaDB log va ghi checkpoint cua chinh no.
+# Vector chỉ cần đọc log MariaDB và ghi checkpoint của chính nó.
 if ! getent group "$MARIADB_LOG_GROUP" >/dev/null 2>&1; then
     groupadd --system "$MARIADB_LOG_GROUP"
 fi
@@ -47,10 +43,6 @@ if ! id "$VECTOR_USER" >/dev/null 2>&1; then
 fi
 usermod -a -G "$MARIADB_LOG_GROUP" "$VECTOR_USER"
 
-# ========================
-# CREATE INSTALL DIR
-# ========================
-
 step "Prepare install directory"
 ensure_dir "$VECTOR_INSTALL_DIR"
 ensure_dir "$VECTOR_CHECKPOINT_DIR"
@@ -64,7 +56,7 @@ chown -R "$VECTOR_USER:$VECTOR_GROUP" "$VECTOR_CHECKPOINT_DIR" "/log/apps/vector
 chmod 700 "$VECTOR_CHECKPOINT_DIR"
 chmod 750 "/log/apps/vector_mariadb"
 
-# Retrofit quyen doc cho log da ton tai. Khong mo quyen binlog/datadir.
+# Bổ sung quyền đọc cho log đã tồn tại; không mở quyền binlog/datadir.
 for id in "${INSTANCE_IDS[@]}"; do
     INSTANCE_USER="$(get_instance_user "$id")"
     INSTANCE_LOG_DIR="$(get_log_dir "$id")"
@@ -89,16 +81,12 @@ for id in "${INSTANCE_IDS[@]}"; do
     fi
 done
 
-# ========================
-# COPY VECTOR BINARY
-# ========================
-
 step "Install vector binary"
 
 if [ -x "$VECTOR_BIN" ]; then
     log "Vector binary already present: $VECTOR_BIN -> skip"
 else
-    # Tim binary trong package/vector hoac setup/mariadb/Install_Mariadb
+    # Tìm binary trong package/vector hoặc setup/mariadb/Install_Mariadb
     SRC_BIN=""
     if [ -x "${VECTOR_PKG_DIR}/vector" ]; then
         SRC_BIN="${VECTOR_PKG_DIR}/vector"
@@ -117,10 +105,6 @@ else
 fi
 chown root:root "$VECTOR_BIN"
 chmod 755 "$VECTOR_BIN"
-
-# ========================
-# COPY + PATCH VECTOR.YAML
-# ========================
 
 step "Install vector.yaml"
 
@@ -142,15 +126,13 @@ fi
 cp "$SRC_YAML" "$VECTOR_YAML"
 log "Copied template tu $SRC_YAML"
 
-# ------------------------
-# PATCH LOG PATHS CHO MULTI INSTANCE
-# 03_configure_mariadb.sh ghi log vao get_log_dir(id) (LOG_DIR_PATTERN):
+# Vá đường dẫn log cho multi-instance.
+# 03_configure_mariadb.sh ghi log vào get_log_dir(id) (LOG_DIR_PATTERN):
 #   <LOG_DIR>/mariadb.error.log
 #   <LOG_DIR>/mariadb.slow.log
-#   <LOG_DIR>/innodb_stat.log (do innodb_stat.sh)
-# ------------------------
+#   <LOG_DIR>/innodb_stat.log (do innodb_stat.sh sinh ra)
 
-# Sinh block include cho slow log
+# Sinh block include cho từng loại log
 SLOW_INCLUDES=""
 ERROR_INCLUDES=""
 INNODB_INCLUDES=""
@@ -161,16 +143,16 @@ for id in "${INSTANCE_IDS[@]}"; do
     INNODB_INCLUDES+="      - ${INST_LOG_DIR}/innodb_stat.log"$'\n'
 done
 
-# Loai bo trailing newline
+# Bỏ newline cuối
 SLOW_INCLUDES="${SLOW_INCLUDES%$'\n'}"
 ERROR_INCLUDES="${ERROR_INCLUDES%$'\n'}"
 INNODB_INCLUDES="${INNODB_INCLUDES%$'\n'}"
 
-# Lay IP local cho field server trong transform
+# IP local gán cho field server trong transform
 LOCAL_IP="${DR_NODE_IP:-$(hostname -I | awk '{print $1}')}"
 
-# Sinh vector.yaml hoan toan tu config muoi instance (overwrite template log paths)
-# Giu nguyen kafka sinks, transforms cua template - chi noi path cho dung
+# Ghi đè log path của template theo danh sách instance.
+# Giữ nguyên kafka sinks và transforms của template, chỉ sửa path cho đúng.
 command -v python3 >/dev/null 2>&1 || die "python3 bat buoc de render vector.yaml multi-instance"
 python3 - <<PYEOF
 import re
@@ -222,10 +204,7 @@ chown root:"$VECTOR_GROUP" "$VECTOR_YAML"
 chmod 640 "$VECTOR_YAML"
 log "Patched vector.yaml voi ${#INSTANCE_IDS[@]} instance log path"
 
-# ========================
-# VALIDATE CONFIG + PERMISSION (bat buoc)
-# ========================
-
+# Bắt buộc: config hợp lệ và user vector đọc được log.
 step "Validate vector config va quyen doc log bang user $VECTOR_USER"
 command -v runuser >/dev/null 2>&1 || die "Thieu runuser (util-linux)"
 
@@ -244,10 +223,6 @@ if runuser -u "$VECTOR_USER" -- "$VECTOR_BIN" validate --no-environment "$VECTOR
 else
     die "vector validate FAIL voi user $VECTOR_USER: $VECTOR_BIN validate --no-environment $VECTOR_YAML"
 fi
-
-# ========================
-# GENERATE SYSTEMD UNIT
-# ========================
 
 step "Generate systemd unit"
 
@@ -294,10 +269,6 @@ if [ -f "$VECTOR_ENV_FILE" ]; then
     chown root:"$VECTOR_GROUP" "$VECTOR_ENV_FILE"
     chmod 640 "$VECTOR_ENV_FILE"
 fi
-
-# ========================
-# ENABLE SERVICE
-# ========================
 
 step "Enable va start vector service"
 systemctl daemon-reload

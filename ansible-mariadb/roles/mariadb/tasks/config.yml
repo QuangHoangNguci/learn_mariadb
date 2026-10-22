@@ -1,0 +1,17 @@
+---
+# Tương ứng scripts/03_configure_mariadb.sh (+ lib/render_mycnf.sh)
+
+# my.cnf/unit cần jemalloc và numactl
+- name: Kiểm tra jemalloc và numactl
+  ansible.builtin.shell: ldconfig -p | grep -q jemalloc && command -v numactl >/dev/null 2>&1
+  changed_when: false
+
+# Group chỉ-đọc dùng chung cho Vector; MariaDB là process duy nhất ghi log
+- name: Tạo group đọc log
+  ansible.builtin.group:
+    name: "{{ mariadb_log_group }}"
+    system: true
+
+# Ghi my.cnf cho instance
+- name: "Ghi cấu hình instance"
+  ansible.builtin.include_tasks: config_instance.yml

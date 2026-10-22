@@ -1,0 +1,77 @@
+---
+# Cài MariaDB (single / dr / Galera cluster) offline, thay deploy.sh + scripts 01..06.
+# Chạy từ thư mục ansible-mariadb/:
+#   ansible-playbook projects/install_mariadb.yml -i projects/inventory/databases.yaml
+#   thêm --tags / --limit / -e mariadb_install_mode=expand tùy nhu cầu
+#   bật MaxScale / Vector: -e mariadb_install_maxscale=true -e mariadb_install_vector=true
+
+# Mỗi server cài đúng 1 instance MariaDB. Node đầu tiên trong inventory là bootstrap, các node sau là joiner.
+
+- name: Chuẩn bị và cài MariaDB trên các node
+  hosts: mariadb
+  become: true
+  gather_facts: true
+  roles:
+    - mariadb
+
+# Chia node theo vai trò để start đúng thứ tự: bootstrap trước, joiner sau
+- name: Phân nhóm node theo vai trò Galera
+  hosts: mariadb
+  gather_facts: false
+  tags: [start]
+  tasks:
+    - name: Nhóm theo mariadb_node_role
+      ansible.builtin.group_by:
+        key: "mariadb_{{ mariadb_node_role | default('bootstrap' if inventory_hostname == groups['mariadb'][0] else 'joiner') }}"
+
+- name: Khởi động node bootstrap
+  hosts: mariadb_bootstrap
+  become: true
+  gather_facts: true
+  tags: [start]
+  tasks:
+    - ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: start
+
+# serial 1: mỗi lần 1 joiner để tránh nhiều node SST cùng lúc
+- name: Khởi động các node joiner
+  hosts: mariadb_joiner
+  become: true
+  gather_facts: true
+  serial: 1
+  tags: [start]
+  tasks:
+    - ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: start
+
+# 07: MaxScale (proxy RW/RO tới cluster). Đổi mariadb_install_maxscale thành true để cài
+# (hoặc -e mariadb_install_maxscale=true). Cần topology cluster và mariadb_max_rw_port/max_ro_port.
+- name: Cài MaxScale
+  hosts: mariadb
+  become: true
+  gather_facts: true
+  tags: [maxscale]
+  vars:
+    mariadb_install_maxscale: false
+  tasks:
+    - ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: maxscale
+      when: mariadb_install_maxscale | bool
+
+# 09: Vector (đẩy log MariaDB). Đổi mariadb_install_vector thành true để cài
+# (hoặc -e mariadb_install_vector=true).
+- name: Cài Vector
+  hosts: mariadb
+  become: true
+  gather_facts: true
+  tags: [vector]
+  vars:
+    mariadb_install_vector: false
+  tasks:
+    - ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: vector
+      when: mariadb_install_vector | bool

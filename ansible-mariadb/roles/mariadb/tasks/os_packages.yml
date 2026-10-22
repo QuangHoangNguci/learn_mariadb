@@ -1,0 +1,77 @@
+---
+# Bỏ qua cài gói nếu đã đủ (expand)
+- name: Kiểm tra jemalloc / numactl đã có chưa
+  ansible.builtin.shell: ldconfig -p | grep -q jemalloc && command -v numactl >/dev/null 2>&1
+  register: _deps_present
+  changed_when: false
+  failed_when: false
+
+# Lấy gói offline theo OS
+- name: Liệt kê gói trên controller
+  ansible.builtin.set_fact:
+    _os_pkg_files: >-
+      {{ _os_pkg_files | default([]) + lookup('ansible.builtin.fileglob',
+         mariadb_package_dir ~ '/' ~ item ~ '/*.' ~ ('deb' if ansible_os_family == 'Debian' else 'rpm'),
+         wantlist=True) }}
+  loop: "{{ mariadb_os_package_subdirs }}"
+  when: mariadb_install_mode == 'fresh' or _deps_present.rc != 0
+
+# Bỏ gói trùng với MySQL/MariaDB sẵn có
+- name: Lọc gói dễ xung đột
+  ansible.builtin.set_fact:
+    _os_pkg_files: "{{ _os_pkg_files | default([]) | reject('search', '/(' ~ mariadb_os_package_skip_regex ~ ')') | list }}"
+
+# Nơi đặt gói trên node
+- name: Tạo thư mục tạm chứa gói
+  ansible.builtin.file:
+    path: "{{ mariadb_os_package_stage_dir }}"
+    state: directory
+    mode: "0755"
+  when: _os_pkg_files | length > 0
+
+# Đưa gói offline lên node
+- name: Copy gói lên node
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ mariadb_os_package_stage_dir }}/{{ item | basename }}"
+    mode: "0644"
+  loop: "{{ _os_pkg_files }}"
+
+# Cài trên Debian/Ubuntu
+- name: Cài gói .deb (chịu lỗi từng gói)
+  ansible.builtin.shell: dpkg -i {{ mariadb_os_package_stage_dir }}/*.deb; dpkg --configure -a
+  register: _dpkg
+  changed_when: "'Setting up' in _dpkg.stdout"
+  failed_when: false
+  when: ansible_os_family == 'Debian' and _os_pkg_files | length > 0
+
+# Cài trên RHEL/CentOS
+- name: Cài gói .rpm
+  ansible.builtin.yum:
+    name: "{{ _os_pkg_files | map('basename') | map('regex_replace', '^(.*)$', mariadb_os_package_stage_dir ~ '/\\1') | list }}"
+    state: present
+    disable_gpg_check: true
+  failed_when: false
+  when: ansible_os_family == 'RedHat' and _os_pkg_files | length > 0
+
+# Xác nhận phụ thuộc đã có
+- name: Kiểm tra gói bắt buộc (jemalloc, numactl, iptables)
+  ansible.builtin.shell: "{{ item.cmd }}"
+  register: _critical
+  changed_when: false
+  failed_when: false
+  loop:
+    - { name: jemalloc, cmd: "ldconfig -p | grep -q jemalloc" }
+    - { name: numactl, cmd: "command -v numactl" }
+    - { name: iptables, cmd: "command -v iptables" }
+  loop_control:
+    label: "{{ item.name }}"
+
+# Dừng khi thiếu gói thiết yếu
+- name: Báo lỗi nếu thiếu gói bắt buộc
+  ansible.builtin.fail:
+    msg: "Thiếu gói bắt buộc: {{ item.item.name }}. Xem output dpkg: {{ _dpkg.stdout | default('') }}"
+  loop: "{{ _critical.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0

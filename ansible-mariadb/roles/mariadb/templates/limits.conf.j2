@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+{{ inst.user }} soft nofile {{ mariadb_max_open_files }}
+{{ inst.user }} hard nofile {{ mariadb_max_open_files }}

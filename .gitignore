@@ -1,6 +1,6 @@
 # Large binary files (>50MB) - not suitable for GitHub
-setup/mariadb/Install_Mariadb/scripts_vector/vector
-package/maxscale/maxscale-25.10.1.ubuntu.noble.tar.gz
+# setup/mariadb/Install_Mariadb/scripts_vector/vector
+# package/maxscale/maxscale-25.10.1.ubuntu.noble.tar.gz
 
 # OS generated files
 .DS_Store

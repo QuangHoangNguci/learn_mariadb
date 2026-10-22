@@ -1,0 +1,116 @@
+---
+# Kiểm tra biến đầu vào và tính thông số cho instance duy nhất trên node (thay common.sh).
+# Kết quả: dict `inst` dùng ở mọi giai đoạn sau.
+
+# Chặn sớm nếu biến đầu vào sai giá trị
+- name: Kiểm tra biến cơ bản
+  ansible.builtin.assert:
+    that:
+      - mariadb_topology in ['single', 'dr', 'cluster', 'dr-cluster']
+      - mariadb_install_mode in ['fresh', 'expand']
+      - mariadb_buf_mb == 'auto' or (mariadb_buf_mb | int) >= 64
+      - mariadb_reserved_ram_pct | int >= 5
+      - mariadb_reserved_ram_pct | int <= 90
+      - mariadb_disk_type in ['auto', 'ssd', 'hdd']
+      - mariadb_node_role in ['bootstrap', 'joiner']
+    fail_msg: "Biến mariadb_* không hợp lệ (xem roles/mariadb/defaults/main.yml)"
+
+# Đặt cờ galera/replica để các task sau dùng
+- name: Suy ra trạng thái từ topology
+  ansible.builtin.set_fact:
+    mariadb_galera_enabled: "{{ mariadb_topology in ['cluster', 'dr-cluster'] }}"
+    mariadb_replica_mode: "{{ mariadb_topology in ['dr', 'dr-cluster'] }}"
+
+# Node phải nằm trong nhóm inventory khi chạy Galera
+- name: Kiểm tra điều kiện riêng của Galera / replica
+  ansible.builtin.assert:
+    that:
+      - mariadb_node_ip in mariadb_cluster_nodes
+      - mariadb_cluster_name | length > 0
+      - mariadb_galera_pass | length > 0
+    fail_msg: "Galera: node phải nằm trong nhóm {{ mariadb_cluster_group }} và cần mariadb_cluster_name, mariadb_galera_pass"
+  when: mariadb_galera_enabled
+
+# Replica cần biết IP primary để mở firewall
+- name: Replica cần khai báo PRIMARY_NODES
+  ansible.builtin.assert:
+    that: mariadb_primary_nodes | length > 0
+    fail_msg: "mariadb_topology={{ mariadb_topology }} (replica) thì mariadb_primary_nodes không được rỗng"
+  when: mariadb_replica_mode
+
+# MaxScale chỉ route tới Galera cluster
+- name: Kiểm tra điều kiện MaxScale
+  ansible.builtin.assert:
+    that:
+      - mariadb_galera_enabled
+      - mariadb_maxscale_pass | length > 0
+      - mariadb_max_rw_port | int > 0 or mariadb_max_ro_port | int > 0
+    fail_msg: "mariadb_install_maxscale=true cần topology cluster/dr-cluster, mariadb_maxscale_pass và ít nhất 1 cổng max_rw/max_ro"
+  when: mariadb_install_maxscale | bool
+
+# Lấy RAM/CPU/loại đĩa để chia buffer pool và tuning I/O
+- name: Tính tài nguyên host
+  ansible.builtin.set_fact:
+    mariadb_ram_mb: "{{ ansible_memtotal_mb | int }}"
+    mariadb_cpu: "{{ ansible_processor_nproc | int }}"
+    # auto: rotational=0 -> SSD/NVMe, =1 -> HDD
+    mariadb_disk_type_eff: >-
+      {{ mariadb_disk_type if mariadb_disk_type in ['ssd', 'hdd'] else
+         ('ssd' if (ansible_devices | dict2items
+                    | selectattr('key', 'match', '^(sd[a-z]+|nvme[0-9]+n[0-9]+|vd[a-z]+)$')
+                    | selectattr('value.rotational', 'equalto', '0') | list | length > 0) else 'hdd') }}
+
+# Sinh port, đường dẫn, buffer, server_id... của instance, lưu vào `inst`
+- name: Tính thông số instance
+  vars:
+    _usable_mb: "{{ mariadb_ram_mb | int * (100 - mariadb_reserved_ram_pct | int) // 100 }}"
+    _bp: "{{ [_usable_mb | int, 128] | max if mariadb_buf_mb == 'auto' else mariadb_buf_mb | int }}"
+    _ssd: "{{ mariadb_disk_type_eff == 'ssd' }}"
+    _last: "{{ mariadb_node_ip.split('.')[-1] }}"
+    _octet: "{{ _last | int if _last is match('^[0-9]+$') else 100 }}"
+    _server_id: "{{ mariadb_server_id | int if mariadb_galera_enabled else _octet | int * 100 }}"
+    _node_index: "{{ mariadb_cluster_nodes.index(mariadb_node_ip) + 1 if mariadb_node_ip in mariadb_cluster_nodes else 0 }}"
+  ansible.builtin.set_fact:
+    inst:
+      port: "{{ mariadb_port | int }}"
+      mgnt: "{{ mariadb_mgnt_port | int }}"
+      size_gb: "{{ mariadb_size_gb | int }}"
+      max_rw: "{{ mariadb_max_rw_port | int }}"
+      max_ro: "{{ mariadb_max_ro_port | int }}"
+      cluster_name: "{{ mariadb_cluster_name }}"
+      galera_pass: "{{ mariadb_galera_pass }}"
+      maxscale_pass: "{{ mariadb_maxscale_pass }}"
+      name: "{{ mariadb_instance_name }}"
+      user: "{{ mariadb_instance_name }}"
+      service: "{{ mariadb_instance_name }}"
+      install_dir: "{{ mariadb_install_base_dir }}/{{ mariadb_instance_name }}"
+      conf_file: "{{ mariadb_config_file }}"
+      data_dir: "{{ mariadb_data_dir }}"
+      tmp_dir: "{{ mariadb_tmp_dir }}"
+      log_dir: "{{ mariadb_log_dir }}"
+      binlog_dir: "{{ mariadb_binlog_dir }}"
+      socket: "{{ mariadb_data_dir }}/mariadb.sock"
+      bp_mb: "{{ _bp | int }}"
+      bp_instances: "{{ [[(_bp | int) // 1024, 1] | max, 8] | min }}"
+      log_file_mb: "{{ [[(_bp | int) // 4, 256] | max, 2048] | min }}"
+      io_cap: "{{ 4000 if _ssd else 200 }}"
+      io_max: "{{ 10000 if _ssd else 2000 }}"
+      flush_neighbors: "{{ 0 if _ssd else 1 }}"
+      thread_pool: "{{ [[(mariadb_cpu | int) * 2, 4] | max, 64] | min }}"
+      server_id: "{{ _server_id | int }}"
+      gtid_domain_id: "{{ mariadb_gtid_domain_id | int if mariadb_galera_enabled else _server_id | int }}"
+      wsrep_sst: "{{ mariadb_wsrep_base_port | int + 1 }}"
+      wsrep_listen: "{{ mariadb_wsrep_base_port | int + 2 }}"
+      wsrep_ist: "{{ mariadb_wsrep_base_port | int + 3 }}"
+      wsrep_node_name: "{{ mariadb_node_name_prefix }}_{{ _node_index }}"
+
+# Các port của instance không được trùng nhau
+- name: Kiểm tra trùng port
+  vars:
+    _ports: >-
+      {{ ([inst.port, inst.mgnt, inst.max_rw, inst.max_ro]
+         + ([inst.wsrep_listen, inst.wsrep_sst, inst.wsrep_ist] if mariadb_galera_enabled else []))
+         | reject('equalto', 0) | list }}
+  ansible.builtin.assert:
+    that: _ports | length == _ports | unique | length
+    fail_msg: "Có port bị trùng: {{ _ports | sort }}"

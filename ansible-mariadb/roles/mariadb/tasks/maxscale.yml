@@ -1,0 +1,300 @@
+---
+# Tương ứng scripts/07_maxscale_install.sh
+# Cài MaxScale trên node, route tới toàn bộ node Galera trong inventory.
+# Chỉ chạy khi mariadb_install_maxscale=true.
+
+# Tính lại thông số instance vì giai đoạn này chạy trong play riêng
+- name: Tính thông số instance
+  ansible.builtin.import_tasks: common.yml
+
+# MaxScale chạy bằng user riêng, không đăng nhập được
+- name: Tạo user maxscale
+  ansible.builtin.user:
+    name: maxscale
+    system: true
+    shell: /bin/false
+    create_home: false
+
+# NodeJS cần cho MaxGUI; bỏ qua nếu đã có
+- name: Kiểm tra NodeJS
+  ansible.builtin.command: node --version
+  register: _node
+  changed_when: false
+  failed_when: false
+
+# Tìm gói NodeJS offline trên controller
+- name: Tìm gói NodeJS
+  ansible.builtin.set_fact:
+    _node_tarball: "{{ lookup('ansible.builtin.fileglob', mariadb_nodejs_package_dir ~ '/node-*.tar.*', wantlist=True) | sort | first | default('') }}"
+  when: _node.rc != 0
+
+# MaxGUI có thể không chạy nếu thiếu NodeJS nhưng MaxScale vẫn hoạt động
+- name: Cảnh báo nếu thiếu gói NodeJS
+  ansible.builtin.debug:
+    msg: "Không thấy gói NodeJS trong {{ mariadb_nodejs_package_dir }}. MaxGUI có thể không hoạt động."
+  when: _node.rc != 0 and _node_tarball | length == 0
+
+# Cài NodeJS vào /usr/local/lib/node
+- name: Cài NodeJS offline
+  when: _node.rc != 0 and _node_tarball | length > 0
+  block:
+    - name: Tạo thư mục NodeJS
+      ansible.builtin.file:
+        path: /usr/local/lib/node
+        state: directory
+        mode: "0755"
+
+    - name: Giải nén NodeJS
+      ansible.builtin.unarchive:
+        src: "{{ _node_tarball }}"
+        dest: /usr/local/lib/node
+        extra_opts: ["--strip-components=1"]
+        creates: /usr/local/lib/node/bin/node
+
+    # Cho phép gọi node/npm/npx từ PATH
+    - name: Tạo symlink node, npm, npx
+      ansible.builtin.file:
+        src: "/usr/local/lib/node/bin/{{ item }}"
+        dest: "/usr/bin/{{ item }}"
+        state: link
+      loop: [node, npm, npx]
+
+# MaxScale luôn tìm /var/lib/maxscale/maxscale.cnf.d khi khởi động, thiếu sẽ cảnh báo hoặc lỗi quyền
+- name: Tạo thư mục global của MaxScale
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: maxscale
+    group: maxscale
+  loop:
+    - /var/lib/maxscale
+    - /var/lib/maxscale/maxscale.cnf.d
+    - /etc/maxscale.modules.d
+
+# Server siết quyền (drwxr-x---) làm systemd chdir thất bại, cần o+x ở thư mục cha
+- name: Mở quyền traverse thư mục cha
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: o+x
+  loop: [/var, /var/lib, /var/lib/maxscale, /var/log]
+
+# Liệt kê gói MaxScale trên controller (.deb hoặc .tar.gz)
+- name: Tìm gói MaxScale
+  ansible.builtin.set_fact:
+    _ms_deb: "{{ lookup('ansible.builtin.fileglob', mariadb_maxscale_package_dir ~ '/*.deb', wantlist=True) | sort }}"
+    _ms_tar: "{{ lookup('ansible.builtin.fileglob', mariadb_maxscale_package_dir ~ '/*.tar.gz', wantlist=True) | sort | first | default('') }}"
+
+# auto ưu tiên .deb; có thể ép bằng mariadb_maxscale_package_type
+- name: Chọn kiểu cài MaxScale
+  ansible.builtin.set_fact:
+    _ms_use_deb: "{{ mariadb_maxscale_package_type == 'deb' or (mariadb_maxscale_package_type == 'auto' and _ms_deb | length > 0) }}"
+
+- name: Kiểm tra có gói MaxScale
+  ansible.builtin.assert:
+    that: (_ms_deb | length > 0) if _ms_use_deb else (_ms_tar | length > 0)
+    fail_msg: "Không thấy gói MaxScale ({{ 'deb' if _ms_use_deb else 'tar.gz' }}) trong {{ mariadb_maxscale_package_dir }}"
+
+# Cài bằng dpkg, gói phụ thuộc phải nằm sẵn trong thư mục package/maxscale
+- name: Cài MaxScale (.deb)
+  when: _ms_use_deb
+  block:
+    - name: Kiểm tra MaxScale đã cài chưa
+      ansible.builtin.command: dpkg-query -W -f='${Status}' maxscale
+      register: _ms_dpkg
+      changed_when: false
+      failed_when: false
+
+    - name: Cài gói .deb
+      when: "'install ok installed' not in _ms_dpkg.stdout"
+      block:
+        - name: Tạo thư mục tạm chứa gói
+          ansible.builtin.file:
+            path: /tmp/maxscale_pkgs
+            state: directory
+            mode: "0755"
+
+        - name: Copy gói lên node
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "/tmp/maxscale_pkgs/{{ item | basename }}"
+            mode: "0644"
+          loop: "{{ _ms_deb }}"
+
+        # dpkg tự xử lý thứ tự; lỗi thiếu dependency được kiểm tra ở bước sau
+        - name: dpkg -i toàn bộ gói
+          ansible.builtin.shell: DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/maxscale_pkgs/*.deb
+          register: _ms_dpkg_out
+          failed_when: false
+          changed_when: true
+
+        - name: Kiểm tra MaxScale đã cài thành công
+          ansible.builtin.command: dpkg-query -W -f='${Status}' maxscale
+          register: _ms_dpkg2
+          changed_when: false
+          failed_when: "'install ok installed' not in _ms_dpkg2.stdout"
+
+        - name: Dọn thư mục tạm
+          ansible.builtin.file:
+            path: /tmp/maxscale_pkgs
+            state: absent
+      rescue:
+        - name: Báo lỗi cài .deb
+          ansible.builtin.fail:
+            msg: "Cài MaxScale .deb thất bại, thiếu dependency? Bổ sung .deb vào {{ mariadb_maxscale_package_dir }}. dpkg: {{ (_ms_dpkg_out.stderr | default('')) }}"
+
+    - name: Đường dẫn MaxScale (deb)
+      ansible.builtin.set_fact:
+        _ms_bin: /usr/bin/maxscale
+        _ms_ctrl: /usr/bin/maxctrl
+        _ms_lib_base: /usr/lib/x86_64-linux-gnu
+        _ms_lib_modules: /usr/lib/x86_64-linux-gnu/maxscale
+        _ms_workdir: /var/lib/maxscale
+
+# Giải nén tarball vào thư mục cài rồi trỏ symlink
+- name: Cài MaxScale (.tar.gz)
+  when: not _ms_use_deb
+  block:
+    - name: Tạo thư mục cài
+      ansible.builtin.file:
+        path: "{{ mariadb_maxscale_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Giải nén MaxScale
+      ansible.builtin.unarchive:
+        src: "{{ _ms_tar }}"
+        dest: "{{ mariadb_maxscale_install_dir }}"
+        extra_opts: ["--strip-components=1"]
+        creates: "{{ mariadb_maxscale_install_dir }}/bin/maxscale"
+
+    # Tar giữ umask máy build (có thể 700) mà MaxScale chạy bằng user maxscale nên others cần rx
+    - name: Mở quyền đọc cho others
+      ansible.builtin.file:
+        path: "{{ mariadb_maxscale_install_dir }}"
+        mode: go+rX
+        recurse: true
+
+    - name: Đường dẫn MaxScale (tar)
+      ansible.builtin.set_fact:
+        _ms_bin: "{{ mariadb_maxscale_install_dir }}/bin/maxscale"
+        _ms_ctrl: "{{ mariadb_maxscale_install_dir }}/bin/maxctrl"
+        _ms_lib_base: "{{ mariadb_maxscale_install_dir }}/lib/x86_64-linux-gnu"
+        _ms_lib_modules: "{{ mariadb_maxscale_install_dir }}/lib/x86_64-linux-gnu/maxscale"
+        _ms_workdir: "{{ mariadb_maxscale_install_dir }}"
+
+    - name: Tạo symlink maxscale, maxctrl
+      ansible.builtin.file:
+        src: "{{ item.src }}"
+        dest: "/usr/bin/{{ item.name }}"
+        state: link
+      loop:
+        - { name: maxscale, src: "{{ _ms_bin }}" }
+        - { name: maxctrl, src: "{{ _ms_ctrl }}" }
+
+# Binary phải tồn tại trước khi sinh config
+- name: Kiểm tra binary MaxScale
+  ansible.builtin.stat:
+    path: "{{ _ms_bin }}"
+  register: _ms_bin_stat
+  failed_when: not _ms_bin_stat.stat.exists
+
+# .deb tự enable maxscale.service với cấu hình mặc định, tắt để dùng cấu hình riêng bên dưới
+- name: Dừng service mặc định của gói .deb
+  ansible.builtin.systemd:
+    name: maxscale
+    state: stopped
+  when: _ms_use_deb
+  failed_when: false
+
+# Lệnh `maxctrl` tự trỏ REST port của instance (trừ khi người dùng truyền -h/--hosts)
+- name: Tạo wrapper maxctrl
+  ansible.builtin.copy:
+    dest: /usr/local/bin/maxctrl
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Sinh bởi Ansible - maxctrl -> REST MaxScale 127.0.0.1:{{ mariadb_maxscale_rest_port }}
+      for _a in "$@"; do
+        case "$_a" in
+          -h|--hosts|-h=*|--hosts=*) exec "{{ _ms_ctrl }}" "$@" ;;
+        esac
+      done
+      exec "{{ _ms_ctrl }}" --hosts=127.0.0.1:{{ mariadb_maxscale_rest_port }} "$@"
+
+# expand không ghi đè config proxy đang chạy
+- name: Kiểm tra config MaxScale hiện có
+  ansible.builtin.stat:
+    path: /etc/maxscale.cnf
+  register: _ms_conf
+
+- name: Quyết định ghi config
+  ansible.builtin.set_fact:
+    _ms_write: "{{ mariadb_install_mode == 'fresh' or not _ms_conf.stat.exists }}"
+
+- name: Ghi config và khởi động MaxScale
+  when: _ms_write
+  block:
+    # Giữ bản sao config cũ khi fresh
+    - name: Backup config cũ
+      ansible.builtin.copy:
+        src: /etc/maxscale.cnf
+        dest: "/etc/maxscale.cnf.bak.{{ ansible_date_time.epoch }}"
+        remote_src: true
+        mode: preserve
+      when: _ms_conf.stat.exists
+
+    # Thư mục log/data/run riêng của MaxScale
+    - name: Tạo thư mục log, data, run
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: maxscale
+        group: maxscale
+        recurse: true
+      loop:
+        - /var/log/maxscale
+        - /var/lib/maxscale
+        - /run/maxscale
+        - /var/lib/maxscale/maxscale.cnf.d
+
+    # Cấu hình server, monitor, service, listener
+    - name: Ghi /etc/maxscale.cnf
+      ansible.builtin.template:
+        src: maxscale.cnf.j2
+        dest: /etc/maxscale.cnf
+        owner: maxscale
+        group: maxscale
+        mode: "0600"
+      no_log: true
+
+    # Unit systemd chạy MaxScale bằng user maxscale
+    - name: Ghi unit systemd
+      ansible.builtin.template:
+        src: maxscale.service.j2
+        dest: /etc/systemd/system/maxscale.service
+        mode: "0644"
+
+    - name: Enable và restart MaxScale
+      ansible.builtin.systemd:
+        name: maxscale
+        state: restarted
+        enabled: true
+        daemon_reload: true
+
+    # Service sống nhưng REST chưa mở thì chưa thể tạo admin user
+    - name: Chờ REST API mở
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ mariadb_maxscale_rest_port | int }}"
+        timeout: 60
+
+    # Mật khẩu admin REST dùng chung mariadb_maxscale_pass
+    - name: Tạo admin user cho REST API
+      ansible.builtin.command: >-
+        {{ _ms_ctrl }} -h 127.0.0.1:{{ mariadb_maxscale_rest_port }}
+        create user admin {{ inst.maxscale_pass | quote }} --type=admin
+      register: _ms_admin
+      changed_when: _ms_admin.rc == 0
+      failed_when: _ms_admin.rc != 0 and 'Duplicate username' not in (_ms_admin.stdout ~ _ms_admin.stderr)
+      no_log: true

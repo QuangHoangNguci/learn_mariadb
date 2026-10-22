@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Unit checks for the multi-instance config parser and per-ID settings.
+# Kiểm tra parser cấu hình multi-instance và các thiết lập theo từng ID.
 
 set -uo pipefail
 
@@ -45,7 +45,7 @@ assert_eq "$(get_instance_cluster_name 2)" "legacy_cluster_2"
 assert_eq "$(get_instance_galera_pass 2)" "legacy-galera"
 assert_eq "$(get_instance_maxscale_pass 2)" "legacy-maxscale"
 
-# Security regressions: DB jobs va Vector khong duoc quay lai chay root.
+# Chống hồi quy bảo mật: DB jobs và Vector không được chạy lại bằng root.
 assert_file_not_matches scripts/08_install_db_jobs.sh 'JOB_USER\[[^]]+\]="root"'
 assert_file_not_matches scripts/09_install_vector.sh '^(User|Group)=root$'
 assert_file_contains scripts/08_install_db_jobs.sh 'DB_JOB_OS_USER="${DB_JOB_OS_USER:-mariadb_jobs}"'

@@ -1,0 +1,25 @@
+---
+# Tương ứng scripts/04_enable_mariadb_service.sh
+# Chỉ sinh unit systemd, không enable / start (start ở start.yml).
+
+# Dùng cho LD_PRELOAD trong unit
+- name: Tìm đường dẫn jemalloc
+  ansible.builtin.shell: ldconfig -p | grep jemalloc | head -n1 | awk '{print $NF}'
+  register: _jemalloc
+  changed_when: false
+  failed_when: false
+
+# Unit vẫn chạy nhưng không dùng jemalloc
+- name: Cảnh báo nếu thiếu jemalloc
+  ansible.builtin.debug:
+    msg: "jemalloc không tìm thấy - bỏ qua LD_PRELOAD"
+  when: _jemalloc.stdout | length == 0
+
+# Tạo service cho instance
+- name: Sinh unit systemd
+  ansible.builtin.include_tasks: service_instance.yml
+
+# Nhận unit mới
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

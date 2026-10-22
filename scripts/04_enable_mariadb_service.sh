@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Sinh /etc/systemd/system/mariadb_<ID>.service cho moi instance.
-# KHONG enable, KHONG start. User tu lam thu cong sau khi 05 xong.
+# Sinh /etc/systemd/system/mariadb_<ID>.service cho mỗi instance.
+# KHÔNG enable, KHÔNG start: người dùng tự làm thủ công sau khi 05 xong.
 
 set -euo pipefail
 
@@ -21,10 +21,7 @@ log "Installation Mode: $MODE"
 JEMALLOC_PATH=$(ldconfig -p | grep jemalloc | head -n1 | awk '{print $NF}' || true)
 [ -n "$JEMALLOC_PATH" ] || warn "jemalloc khong tim thay - bo qua LD_PRELOAD"
 
-# ========================
-# FRESH: HOI TRUOC KHI DISABLE MARIADB CUA OS
-# ========================
-
+# Fresh: hỏi xác nhận trước khi disable MariaDB mặc định của OS
 if [ "$MODE" == "fresh" ]; then
     OS_ENABLED=""
     for svc in mariadb mysql mysqld; do
@@ -46,16 +43,8 @@ if [ "$MODE" == "fresh" ]; then
     fi
 fi
 
-# ========================
-# RELOAD SYSTEMD
-# ========================
-
 log "Reload systemd daemon"
 systemctl daemon-reload
-
-# ========================
-# GENERATE PER-INSTANCE UNIT
-# ========================
 
 for id in "${INSTANCE_IDS[@]}"; do
     INSTALL_DIR="$(get_install_dir "$id")"
@@ -89,29 +78,27 @@ for id in "${INSTANCE_IDS[@]}"; do
     GALERA_EXEC_TAIL=""
 
     if is_galera_enabled; then
-        # Tarball MariaDB build san voi prefix /usr/local/mysql -> cac script wsrep/
-        # galera trong bin/ hardcode duong dan theo prefix do (mariadbd,
-        # my_print_defaults, mariabackup...). SAI khi extract vao $INSTALL_DIR:
-        #   - galera_recovery (ExecStartPre) chay .../mariadbd -> service khong start
-        #   - wsrep_sst_* (luc SST/IST) chay .../mariabackup -> joiner khong sync
-        # Doi /usr/local/mysql/bin -> $INSTALL_DIR/bin (idempotent, fix ca khi dung
-        # bien sbindir=...). Patch cho ca nhom helper de tranh vo o buoc sau.
+        # Tarball build sẵn với prefix /usr/local/mysql nên các script wsrep/galera trong bin/
+        # hardcode đường dẫn theo prefix đó (mariadbd, my_print_defaults, mariabackup...) -> sai
+        # khi extract vào $INSTALL_DIR:
+        #   - galera_recovery (ExecStartPre) -> service không start
+        #   - wsrep_sst_* (SST/IST) -> joiner không sync
+        # Đổi /usr/local/mysql/bin -> $INSTALL_DIR/bin (idempotent), patch cả nhóm helper.
         for _h in galera_recovery galera_new_cluster wsrep_sst_common \
                   wsrep_sst_mariabackup wsrep_sst_rsync wsrep_sst_mysqldump; do
             _hf="$INSTALL_DIR/bin/$_h"
             [ -f "$_hf" ] && sed -i "s|/usr/local/mysql/bin|$INSTALL_DIR/bin|g" "$_hf"
         done
-        # galera_recovery: dam bao dong print_defaults tro dung (phong khi khong theo prefix tren)
+        # Đảm bảo dòng print_defaults của galera_recovery trỏ đúng
         GR_BIN="$INSTALL_DIR/bin/galera_recovery"
         [ -f "$GR_BIN" ] && sed -i "s|^print_defaults=.*|print_defaults=\"$INSTALL_DIR/bin/my_print_defaults\"|" "$GR_BIN"
         log "Patched wsrep/galera helper scripts (build-prefix -> $INSTALL_DIR/bin)"
 
-        # Output service file phai co dang:
-        #   VAR=`/usr/local/.../galera_recovery`; [ $? -eq 0 ] && echo _WSREP_START_POSITION=$VAR ...
-        # Heredoc rules (unquoted GRP):
-        #   \\  -> \  (giu lai cho systemd line continuation cuoi dong)
-        #   \`  -> `  (backtick literal cho sh command substitution)
-        #   \$  -> $  (dollar literal cho sh expand $? va $VAR)
+        # Service file cần dạng: VAR=`.../galera_recovery`; [ $? -eq 0 ] && echo _WSREP_START_POSITION=$VAR ...
+        # Quy tắc heredoc (GRP không quote):
+        #   \\ -> \ (giữ cho systemd nối dòng cuối dòng)
+        #   \` -> ` (backtick literal cho sh command substitution)
+        #   \$ -> $ (dollar literal cho sh expand $? và $VAR)
         GALERA_RECOVERY_LINES=$(cat <<GRP
 EnvironmentFile=-/tmp/wsrep-new-cluster_${id}
 EnvironmentFile=-/tmp/wsrep-start-position_${id}

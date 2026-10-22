@@ -1,0 +1,37 @@
+[Unit]
+Description=MariaDB (port={{ inst.port }})
+Documentation=man:mariadbd(8)
+After=network.target
+
+[Service]
+User={{ inst.user }}
+Group={{ inst.user }}
+SupplementaryGroups={{ mariadb_log_group }}
+UMask=0027
+
+{% if _jemalloc.stdout | length > 0 %}
+Environment="LD_PRELOAD={{ _jemalloc.stdout }}"
+{% endif %}
+
+{% if mariadb_galera_enabled %}
+EnvironmentFile=-/tmp/wsrep-new-cluster
+EnvironmentFile=-/tmp/wsrep-start-position
+
+ExecStartPre=/bin/sh -c "[ ! -e {{ inst.install_dir }}/bin/galera_recovery ] && VAR= || \
+ VAR=`{{ inst.install_dir }}/bin/galera_recovery`; [ $? -eq 0 ] \
+ && echo _WSREP_START_POSITION=$VAR > /tmp/wsrep-start-position || exit 1"
+{% endif %}
+
+ExecStart=/usr/bin/numactl --interleave=all {{ inst.install_dir }}/bin/mariadbd \
+ $MYSQLD_OPTS \
+ --defaults-file={{ inst.conf_file }} \
+ --basedir={{ inst.install_dir }}{{ ' $_WSREP_NEW_CLUSTER $_WSREP_START_POSITION' if mariadb_galera_enabled else '' }}
+
+TimeoutStartSec=9000
+TimeoutStopSec=9000
+Restart=on-failure
+RestartSec=5
+LimitNOFILE={{ mariadb_max_open_files }}
+
+[Install]
+WantedBy=multi-user.target

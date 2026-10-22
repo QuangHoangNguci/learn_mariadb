@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+[Unit]
+Description=MariaDB MaxScale Proxy (RW={{ inst.max_rw }} RO={{ inst.max_ro }} REST={{ mariadb_maxscale_rest_port }})
+After=network.target
+
+[Service]
+Type=simple
+User=maxscale
+Group=maxscale
+
+Environment="LD_LIBRARY_PATH={{ _ms_lib_base }}:{{ _ms_lib_modules }}"
+
+RuntimeDirectory=maxscale
+RuntimeDirectoryMode=0755
+WorkingDirectory={{ _ms_workdir }}
+
+ExecStart={{ _ms_bin }} --nodaemon --config=/etc/maxscale.cnf
+
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+TimeoutStartSec=60
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

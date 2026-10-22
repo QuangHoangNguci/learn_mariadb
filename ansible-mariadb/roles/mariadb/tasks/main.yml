@@ -1,0 +1,38 @@
+---
+# Role duy nhất cài và cấu hình MariaDB. Mỗi giai đoạn là một file task, chọn bằng --tags.
+# Giai đoạn start (khởi động service) chạy riêng bằng tasks_from: start, xem projects/install_mariadb.yml.
+
+# Kiểm tra biến và tính thông số instance (luôn chạy vì mọi giai đoạn đều cần)
+- name: Tính thông số instance
+  ansible.builtin.import_tasks: common.yml
+  tags: [always]
+
+# Chuẩn bị OS: gói offline, firewall, tuning kernel
+- name: Chuẩn bị hệ điều hành
+  ansible.builtin.import_tasks: os_prepare.yml
+  tags: [os]
+
+# Giải nén binary MariaDB và cài từng instance
+- name: Cài binary MariaDB
+  ansible.builtin.import_tasks: install.yml
+  tags: [install]
+
+# Ghi my.cnf cho từng instance
+- name: Cấu hình MariaDB
+  ansible.builtin.import_tasks: config.yml
+  tags: [config]
+
+# Sinh unit systemd cho từng instance
+- name: Tạo service systemd
+  ansible.builtin.import_tasks: service.yml
+  tags: [service]
+
+# Khởi tạo datadir rỗng
+- name: Khởi tạo datadir
+  ansible.builtin.import_tasks: datadir.yml
+  tags: [datadir]
+
+# Import schema, users và đặt mật khẩu root
+- name: Khởi tạo dữ liệu
+  ansible.builtin.import_tasks: init.yml
+  tags: [init]

@@ -1,0 +1,67 @@
+---
+# Tương ứng scripts/02_install_mariadb_binary.sh
+
+# Lấy gói binary offline
+- name: Tìm tarball MariaDB trên controller
+  ansible.builtin.set_fact:
+    _mariadb_tarball: "{{ lookup('ansible.builtin.fileglob', mariadb_package_dir ~ '/mariadb/*.tar.gz', wantlist=True) | sort | first | default('') }}"
+
+# Báo lỗi sớm nếu thiếu gói
+- name: Kiểm tra có tarball
+  ansible.builtin.assert:
+    that: _mariadb_tarball | length > 0
+    fail_msg: "Không thấy mariadb-*.tar.gz trong {{ mariadb_package_dir }}/mariadb"
+
+# Phân biệt instance mới/đã cài
+- name: Kiểm tra thư mục cài hiện có
+  ansible.builtin.stat:
+    path: "{{ inst.install_dir }}"
+  register: _install_stat
+
+# fresh: cài lại; expand: chỉ cài khi chưa có thư mục cài
+- name: Xác định có cần cài không
+  ansible.builtin.set_fact:
+    _need_install: "{{ mariadb_install_mode == 'fresh' or not _install_stat.stat.exists }}"
+
+# Chỉ chạy khi cần cài
+- name: Giải nén MariaDB và cài instance
+  when: _need_install
+  block:
+    # Dữ liệu để kiểm tra trùng port
+    - name: Xem các port đang listen
+      ansible.builtin.command: ss -lnt
+      register: _ss
+      changed_when: false
+
+    # Chuẩn bị binary nguồn
+    - name: Giải nén tarball vào thư mục tạm
+      ansible.builtin.include_tasks: install_extract.yml
+
+    # Cài instance
+    - name: Cài instance
+      ansible.builtin.include_tasks: install_instance.yml
+
+    # Dọn rác sau khi cài
+    - name: Xóa thư mục giải nén tạm
+      ansible.builtin.file:
+        path: /tmp/mariadb_install
+        state: absent
+
+# Dùng client mariadb từ shell
+- name: Thêm PATH client MariaDB
+  ansible.builtin.copy:
+    dest: /etc/profile.d/mariadb.sh
+    mode: "0644"
+    content: |
+      # MariaDB PATH environment
+      export PATH={{ inst.install_dir }}/bin:$PATH
+
+# Lệnh `mariadb` đăng nhập nhanh bằng my.cnf của instance (gọi full path nên không đệ quy)
+- name: Tạo wrapper đăng nhập nhanh
+  ansible.builtin.copy:
+    dest: /usr/local/bin/mariadb
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Sinh bởi Ansible - đăng nhập nhanh vào MariaDB
+      exec "{{ inst.install_dir }}/bin/mariadb" --defaults-file="{{ inst.conf_file }}" "$@"

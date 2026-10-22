@@ -1,0 +1,45 @@
+---
+# Tuning kernel cho DB
+- name: Ghi cấu hình sysctl
+  ansible.builtin.template:
+    src: sysctl.conf.j2
+    dest: /etc/sysctl.d/99-mariadb-tuning.conf
+    mode: "0644"
+  notify: Reload sysctl
+
+# Cho phép mở nhiều file
+- name: Giới hạn nofile theo user MariaDB
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/99-mariadb.conf
+    mode: "0644"
+
+# THP gây giật latency với DB
+- name: Tắt Transparent Huge Pages
+  when: mariadb_enable_thp_disable
+  block:
+    # Có hiệu lực không cần reboot
+    - name: Tắt THP ngay (runtime)
+      ansible.builtin.shell: |
+        echo never > /sys/kernel/mm/transparent_hugepage/enabled
+        echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      changed_when: false
+      failed_when: false
+
+    # Giữ cấu hình sau reboot
+    - name: Tạo service tắt THP khi boot
+      ansible.builtin.copy:
+        src: disable-thp.service
+        dest: /etc/systemd/system/disable-thp.service
+        mode: "0644"
+
+    # Kích hoạt service khi boot
+    - name: Bật service disable-thp
+      ansible.builtin.systemd:
+        name: disable-thp.service
+        enabled: true
+        daemon_reload: true
+
+# Chạy handler trước khi sang bước sau
+- name: Áp dụng sysctl ngay
+  ansible.builtin.meta: flush_handlers

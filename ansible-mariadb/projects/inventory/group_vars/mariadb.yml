@@ -1,0 +1,59 @@
+---
+# Cấu hình chung cho nhóm mariadb (thay configs/cluster.env).
+# Mật khẩu nên đặt trong ansible-vault: ansible-vault encrypt_string '<mật khẩu>' --name mariadb_admin_pass
+
+# single | dr | cluster | dr-cluster
+mariadb_topology: cluster
+# fresh: cài mới | expand: giữ instance đang chạy
+mariadb_install_mode: fresh
+
+# Mỗi server chỉ cài 1 instance
+mariadb_port: 3306
+mariadb_mgnt_port: 1301          # extra_port
+mariadb_size_gb: 1700
+mariadb_buf_mb: auto             # auto hoặc số MB
+mariadb_cluster_name: money
+mariadb_galera_pass: "CHANGE_ME"
+# Cổng MaxScale (0 = tắt), chỉ dùng khi mariadb_install_maxscale=true trong playbook
+mariadb_max_rw_port: 4006
+mariadb_max_ro_port: 4016
+mariadb_maxscale_pass: "CHANGE_ME"
+
+# Node đầu tiên trong inventory là bootstrap, các node sau là joiner (không cần khai báo)
+# mariadb_primary_nodes: ["10.254.0.10"]     # bắt buộc với dr / dr-cluster
+
+# Đường dẫn
+mariadb_instance_name: mariadb
+mariadb_data_dir: /u01/data/database
+mariadb_tmp_dir: /u01/data/database_tmp
+mariadb_log_dir: /u01/logs/mariadb
+mariadb_binlog_dir: /u01/logs/mariadb/binlog
+mariadb_install_base_dir: /usr/local
+mariadb_config_file: /etc/my.cnf
+
+# Galera
+mariadb_node_name_prefix: db
+mariadb_wsrep_base_port: 1030
+mariadb_galera_user_prefix: galera
+mariadb_server_id: 1
+mariadb_gtid_domain_id: 100
+
+# Khởi tạo database 
+mariadb_admin_pass: "CHANGE_ME"
+mariadb_common_pass: "CHANGE_ME"
+mariadb_empty_cluster: false
+
+# Tuning
+mariadb_reserved_ram_pct: 25
+mariadb_disk_type: auto
+mariadb_expire_logs_days: 3
+
+# Hệ thống / mạng
+mariadb_enable_numa_disable: true
+mariadb_enable_thp_disable: true
+mariadb_max_open_files: 1000000
+mariadb_syslog_ip: "127.0.0.1"
+mariadb_ntp_ip: "127.0.0.1"
+mariadb_dns_ip: "8.8.8.8"
+mariadb_mgmt_nodes: []
+mariadb_remove_os_mariadb: false

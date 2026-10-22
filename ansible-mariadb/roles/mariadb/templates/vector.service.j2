@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Vector transform và đẩy log MariaDB sang Kafka / Elasticsearch
+[Unit]
+Description=Vector (MariaDB log shipper)
+Documentation=https://vector.dev
+After=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=simple
+User={{ mariadb_vector_user }}
+Group={{ mariadb_vector_group }}
+SupplementaryGroups={{ mariadb_log_group }}
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+ExecStartPre={{ mariadb_vector_install_dir }}/vector validate --no-environment {{ mariadb_vector_install_dir }}/vector.yaml
+ExecStart={{ mariadb_vector_install_dir }}/vector -c {{ mariadb_vector_install_dir }}/vector.yaml
+ExecReload={{ mariadb_vector_install_dir }}/vector validate --no-environment {{ mariadb_vector_install_dir }}/vector.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+EnvironmentFile=-{{ mariadb_vector_log_dir }}/vector.env
+
+[Install]
+WantedBy=multi-user.target

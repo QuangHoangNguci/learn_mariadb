@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Preview cac gia tri auto-tune se duoc render vao my_<ID>.cnf.
-# Khong sua file nao.
+# Xem trước các giá trị auto-tune sẽ render vào my_<ID>.cnf (không sửa file nào).
 
 set -euo pipefail
 

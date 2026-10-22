@@ -1,0 +1,97 @@
+---
+# Giá trị mặc định cho role mariadb. Ghi đè trong projects/inventory/group_vars/.
+
+# Thư mục gốc của repo (playbook nằm ở ansible-mariadb/projects/)
+mariadb_repo_dir: "{{ playbook_dir }}/../.."
+mariadb_package_dir: "{{ mariadb_repo_dir }}/package"
+mariadb_setup_sql_dir: "{{ mariadb_repo_dir }}/setup/mariadb/Install_Mariadb"
+
+# Topology: single | dr | cluster | dr-cluster
+mariadb_topology: cluster
+# fresh: ghi đè cài mới | expand: giữ nguyên instance đang chạy
+mariadb_install_mode: fresh
+
+# Nhóm inventory chứa các node; tên host phải là IP của node
+mariadb_cluster_group: mariadb
+mariadb_cluster_nodes: "{{ groups[mariadb_cluster_group] }}"
+mariadb_node_ip: "{{ inventory_hostname }}"
+# Node đầu tiên trong inventory là bootstrap, các node sau là joiner
+mariadb_node_role: "{{ 'bootstrap' if inventory_hostname == groups[mariadb_cluster_group][0] else 'joiner' }}"
+# IP primary để mở iptables (bắt buộc với dr / dr-cluster)
+mariadb_primary_nodes: []
+
+# Một instance duy nhất trên mỗi server
+mariadb_port: 3306
+mariadb_mgnt_port: 1301          # extra_port
+mariadb_size_gb: 100             # dung lượng dữ liệu dự kiến (tham khảo tuning)
+mariadb_buf_mb: auto             # innodb_buffer_pool_size: auto hoặc số MB
+mariadb_cluster_name: cluster
+mariadb_max_rw_port: 0           # cổng MaxScale read-write (0 = tắt)
+mariadb_max_ro_port: 0           # cổng MaxScale read-only (0 = tắt)
+
+# Đường dẫn / tên
+mariadb_instance_name: mariadb
+mariadb_data_dir: /u01/data/database
+mariadb_tmp_dir: /u01/data/database_tmp
+mariadb_log_dir: /u01/logs/mariadb
+mariadb_binlog_dir: /u01/logs/mariadb/binlog
+mariadb_install_base_dir: /usr/local
+mariadb_config_file: /etc/my.cnf
+mariadb_log_group: mariadb_log_readers
+
+# Galera
+mariadb_node_name_prefix: db
+mariadb_wsrep_base_port: 1030
+mariadb_galera_user_prefix: galera
+mariadb_galera_pass: ""
+mariadb_gcache_size: 2048M
+mariadb_server_id: 1
+mariadb_gtid_domain_id: 100
+
+# Tuning
+mariadb_reserved_ram_pct: 25
+mariadb_disk_type: auto        # auto | ssd | hdd
+mariadb_expire_logs_days: 3
+mariadb_max_open_files: 1000000
+
+# Mật khẩu khi khởi tạo (script 06)
+mariadb_admin_pass: ""
+mariadb_common_pass: ""
+mariadb_maxscale_pass: ""
+mariadb_empty_cluster: false
+
+# Hệ thống
+mariadb_enable_thp_disable: true
+mariadb_enable_numa_disable: true
+mariadb_syslog_ip: ""
+mariadb_ntp_ip: ""
+mariadb_dns_ip: ""
+mariadb_mgmt_nodes: []
+# true: dừng/gỡ MariaDB/MySQL mặc định của OS khi cài fresh
+mariadb_remove_os_mariadb: false
+
+# --- Gói OS offline ---
+# Thư mục gói offline (trong package/) cần cài; thêm os-jammy / os-el7 tùy OS
+mariadb_os_package_subdirs: "{{ ['os'] + (['os-jammy'] if (ansible_distribution_release | default('')) == 'jammy' else []) + (['os-el7'] if ansible_os_family == 'RedHat' and ansible_distribution_major_version == '7' else []) }}"
+# Gói không cài để tránh xung đột với MySQL/MariaDB sẵn có
+mariadb_os_package_skip_regex: 'mysql-common|mariadb-common|libmariadb3'
+mariadb_os_package_stage_dir: /tmp/mariadb_os_pkgs
+
+# --- MaxScale (07) và Vector (09): bật bằng biến trong playbook ---
+mariadb_install_maxscale: false
+mariadb_install_vector: false
+
+mariadb_maxscale_user: maxscale
+mariadb_maxscale_rest_port: 8990        # REST API (admin_host=127.0.0.1)
+mariadb_maxscale_install_dir: /usr/local/maxscale
+mariadb_maxscale_package_type: auto    # auto | deb | tar
+mariadb_nodejs_package_dir: "{{ mariadb_package_dir }}/nodejs"
+mariadb_maxscale_package_dir: "{{ mariadb_package_dir }}/maxscale"
+
+mariadb_vector_package_dir: "{{ mariadb_package_dir }}/vector"
+mariadb_vector_src_dir: "{{ mariadb_repo_dir }}/setup/mariadb/Install_Mariadb/scripts_vector"
+mariadb_vector_install_dir: /u01/apps/vector_mariadb
+mariadb_vector_log_dir: /log/apps/vector_mariadb
+mariadb_vector_user: vector_mariadb
+mariadb_vector_group: vector_mariadb
+mariadb_vector_service: vector_mariadb

@@ -1,0 +1,19 @@
+---
+# Khởi động service (script gốc để người dùng làm tay sau bước 05).
+#   - Không Galera: enable + start.
+#   - Galera bootstrap: tạo cluster mới cho từng instance.
+#   - Galera joiner: start, data tự sync (SST) từ bootstrap.
+
+# Tính lại thông số instance vì giai đoạn start chạy trong play riêng
+- name: Tính thông số instance
+  ansible.builtin.import_tasks: common.yml
+
+# Chọn file theo standalone/bootstrap/joiner
+- name: Chọn cách khởi động
+  ansible.builtin.set_fact:
+    _start_file: >-
+      {% if not mariadb_galera_enabled %}start_standalone.yml{% elif mariadb_node_role == 'bootstrap' %}start_galera_bootstrap.yml{% else %}start_galera_joiner.yml{% endif %}
+
+# Khởi động instance
+- name: Khởi động instance
+  ansible.builtin.include_tasks: "{{ _start_file | trim }}"

@@ -1,0 +1,8 @@
+---
+# Tương ứng scripts/05_prepare_database.sh
+# Galera joiner không init datadir: data sẽ sync từ bootstrap qua SST.
+
+# Tạo datadir rỗng cho instance
+- name: Init datadir rỗng
+  ansible.builtin.include_tasks: datadir_instance.yml
+  when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')

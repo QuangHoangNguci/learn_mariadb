@@ -1,0 +1,9 @@
+all:
+  children:
+    new__databases:
+      children:
+        mariadb:
+          hosts:
+            10.207.56.51:
+            10.207.56.52:
+            10.207.56.53:

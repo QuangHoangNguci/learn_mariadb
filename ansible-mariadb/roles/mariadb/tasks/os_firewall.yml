@@ -1,0 +1,56 @@
+---
+# Mở traffic ra các dịch vụ hạ tầng
+- name: Cho phép syslog / NTP / DNS đi ra
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    destination: "{{ item.ip }}"
+    protocol: udp
+    destination_port: "{{ item.port | string }}"
+    jump: ACCEPT
+  loop:
+    - { ip: "{{ mariadb_syslog_ip }}", port: 514 }
+    - { ip: "{{ mariadb_ntp_ip }}", port: 123 }
+    - { ip: "{{ mariadb_dns_ip }}", port: 53 }
+  loop_control:
+    label: "{{ item.ip }}:{{ item.port }}"
+  when: item.ip | length > 0
+
+# Chỉ node quản trị truy cập được
+- name: Cho phép node quản trị vào SSH và các port MariaDB
+  vars:
+    _mgmt_ports: >-
+      {{ [22, inst.port, inst.mgnt] }}
+  ansible.builtin.iptables:
+    chain: INPUT
+    source: "{{ item.0 }}"
+    protocol: tcp
+    destination_port: "{{ item.1 | string }}"
+    jump: ACCEPT
+  loop: "{{ mariadb_mgmt_nodes | product(_mgmt_ports) | list }}"
+  loop_control:
+    label: "{{ item.0 }}:{{ item.1 }}"
+
+# Replication (DR) và Galera (WSREP/SST/IST): cho phép toàn bộ traffic giữa các node
+- name: Cho phép traffic giữa các node primary / cluster
+  vars:
+    _peers: "{{ (mariadb_primary_nodes + (mariadb_cluster_nodes if mariadb_galera_enabled else [])) | unique | list }}"
+  ansible.builtin.iptables:
+    chain: "{{ item.1 }}"
+    source: "{{ item.0 if item.1 == 'INPUT' else omit }}"
+    destination: "{{ item.0 if item.1 == 'OUTPUT' else omit }}"
+    jump: ACCEPT
+  loop: "{{ _peers | product(['INPUT', 'OUTPUT']) | list }}"
+  loop_control:
+    label: "{{ item.1 }} {{ item.0 }}"
+
+# Chuẩn bị nơi lưu rule
+- name: Tạo thư mục lưu rule iptables
+  ansible.builtin.file:
+    path: "{{ '/etc/iptables' if ansible_os_family == 'Debian' else '/etc/sysconfig' }}"
+    state: directory
+    mode: "0755"
+
+# Giữ rule sau reboot
+- name: Lưu rule iptables
+  ansible.builtin.shell: iptables-save > {{ '/etc/iptables/rules.v4' if ansible_os_family == 'Debian' else '/etc/sysconfig/iptables' }}
+  changed_when: false

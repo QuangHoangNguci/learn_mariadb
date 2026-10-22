@@ -1,0 +1,38 @@
+---
+# Tương ứng scripts/01_prepare_system.sh
+
+# Chỉ hỗ trợ Debian/RedHat
+- name: Kiểm tra OS được hỗ trợ
+  ansible.builtin.assert:
+    that: ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: "Hệ điều hành không được hỗ trợ: {{ ansible_distribution }}"
+
+# Tránh xung đột với bản của OS
+- name: Gỡ MariaDB/MySQL mặc định của OS (fresh)
+  ansible.builtin.import_tasks: os_remove_mariadb.yml
+  when: mariadb_install_mode == 'fresh' and mariadb_remove_os_mariadb
+
+# ufw sẽ ghi đè rule iptables
+- name: Gỡ ufw để dùng iptables trực tiếp
+  ansible.builtin.apt:
+    name: ufw
+    state: absent
+    purge: true
+  when: ansible_os_family == 'Debian'
+
+# Cài jemalloc, numactl, iptables...
+- name: Cài gói offline
+  ansible.builtin.import_tasks: os_packages.yml
+
+# Cấu hình firewall
+- name: Mở iptables
+  ansible.builtin.import_tasks: os_firewall.yml
+
+# Tối ưu OS cho MariaDB
+- name: Tinh chỉnh kernel, giới hạn file, THP
+  ansible.builtin.import_tasks: os_tuning.yml
+
+# Nhận jemalloc vừa cài
+- name: Cập nhật cache thư viện
+  ansible.builtin.command: ldconfig
+  changed_when: false

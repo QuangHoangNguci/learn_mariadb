@@ -1,8 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
-# Dam bao dir moi tao co quyen 755 (others co x de traverse).
-# Tranh truong hop /etc/login.defs UMASK=077 lam parent dir /u01/data_<ID> mode 700.
+# Dir mới tạo có quyền 755; tránh /etc/login.defs UMASK=077 làm dir cha /u01/data_<ID> thành 700
 umask 022
 
 cd "$(dirname "$0")"
@@ -20,35 +19,27 @@ MODE="${INSTALL_MODE:-fresh}"
 log "Topology: $TOPOLOGY ($(topology_desc))"
 log "Installation Mode: $MODE"
 
-# ========================
-# DEPENDENCIES
-# ========================
-
 ldconfig -p | grep -q jemalloc || die "Missing jemalloc"
 command -v numactl >/dev/null 2>&1 || die "Missing numactl"
 
-# Host resources (de compute_tune_for_id khong phai goi free/nproc moi instance)
+# Lấy tài nguyên host 1 lần để compute_tune_for_id không gọi free/nproc cho mỗi instance
 HOST_RAM_MB=$(free -m | awk '/Mem:/ {print $2}')
 HOST_CPU=$(nproc)
 export HOST_RAM_MB HOST_CPU
 log "Host: RAM=${HOST_RAM_MB}MB, CPU=${HOST_CPU}, DISK=$(detect_disk_type)"
 
-# Shared read-only group cho Vector. MariaDB van la owner va la tien trinh duy
-# nhat ghi log; setgid tren log dir dam bao file moi ke thua group nay.
+# Group chỉ-đọc dùng chung cho Vector. MariaDB vẫn là owner và là process duy nhất ghi log;
+# setgid trên log dir để file mới kế thừa group này.
 MARIADB_LOG_GROUP="${MARIADB_LOG_GROUP:-mariadb_log_readers}"
 if ! getent group "$MARIADB_LOG_GROUP" >/dev/null 2>&1; then
     groupadd --system "$MARIADB_LOG_GROUP"
 fi
 
 if is_galera_enabled; then
-    # detect_node_index die som neu IP local khong nam trong CLUSTER_NODES
+    # detect_node_index die sớm nếu IP local không nằm trong CLUSTER_NODES
     detect_node_index
     log "Galera mode: NODE_INDEX=$NODE_INDEX/$NODE_COUNT (local=$LOCAL_CLUSTER_IP), NODE_ROLE=${NODE_ROLE:-bootstrap}"
 fi
-
-# ========================
-# LOOP INSTANCE
-# ========================
 
 for id in "${INSTANCE_IDS[@]}"; do
 
@@ -69,7 +60,7 @@ for id in "${INSTANCE_IDS[@]}"; do
         continue
     fi
 
-    # Fresh + service active -> tu choi ghi de
+    # Fresh + service đang chạy -> từ chối ghi đè
     if [ "$MODE" == "fresh" ] && systemctl is-active --quiet "$SVC" 2>/dev/null; then
         die "Instance $id ($SVC) dang chay! Stop truoc khi ghi de config: systemctl stop $SVC"
     fi
@@ -78,7 +69,7 @@ for id in "${INSTANCE_IDS[@]}"; do
     PENDING_NOTICE=0
 
     if [ "$MODE" == "expand" ] && [ -f "$CONF_FILE" ]; then
-        # Recompute buffer pool theo bang moi; chi ghi .new neu khac (tranh dong config dang chay)
+        # Tính lại buffer pool; chỉ ghi .new nếu khác (không đụng config đang chạy)
         compute_tune_for_id "$id"
         NEW_BP="$TUNE_BP_MB"
         OLD_BP=$(grep -E "^innodb_buffer_pool_size" "$CONF_FILE" 2>/dev/null \
@@ -97,14 +88,10 @@ for id in "${INSTANCE_IDS[@]}"; do
         warn "  Config moi se ghi vao: $TARGET_CONF_FILE (KHONG ghi de $CONF_FILE)"
     fi
 
-    # ========================
-    # TAO DIR + PERM
-    # ========================
-
     mkdir -p "$DATA_DIR" "$TMP_DATA_DIR" "$LOG_DIR_I" "$BINLOG_DIR"
 
-    # Parent dir (vd /u01/data_<ID>) phai 755 de mariadb_<ID> traverse vao dir con.
-    # Force lai phong khi dir da ton tai voi mode 700 tu lan chay truoc co umask 077.
+    # Dir cha (vd /u01/data_<ID>) phải 755 để mariadb_<ID> truy cập dir con;
+    # ép lại phòng khi đã tồn tại mode 700 từ lần chạy trước với umask 077.
     for d in "$DATA_DIR" "$TMP_DATA_DIR" "$LOG_DIR_I" "$BINLOG_DIR"; do
         parent="$(dirname "$d")"
         [ "$parent" != "/" ] && chmod 755 "$parent"
@@ -129,23 +116,17 @@ for id in "${INSTANCE_IDS[@]}"; do
         find "$LOG_DIR_I/log_innodb" -type f -exec chmod 640 {} +
     fi
 
-    # Binlog co the nam ben trong LOG_DIR nhung khong duoc Vector doc.
+    # Binlog có thể nằm trong LOG_DIR nhưng Vector không được đọc
     chown -R "$USER:$USER" "$BINLOG_DIR"
     find "$BINLOG_DIR" -type d -exec chmod 750 {} +
     find "$BINLOG_DIR" -type f -exec chmod go-rwx {} +
 
-    # ========================
-    # BACKUP CONFIG CU (neu ghi de truc tiep)
-    # ========================
-
+    # Backup config cũ nếu ghi đè trực tiếp
     if [ "$TARGET_CONF_FILE" = "$CONF_FILE" ] && [ -f "$CONF_FILE" ]; then
         cp "$CONF_FILE" "${CONF_FILE}.bak.$(date +%s)"
     fi
 
-    # ========================
-    # RENDER MY.CNF (template + 2 switch galera/dr theo TOPOLOGY)
-    # ========================
-
+    # Render my.cnf (template + 2 switch galera/dr theo TOPOLOGY)
     render_mycnf "$id" "$TARGET_CONF_FILE"
     chown "$USER:$USER" "$TARGET_CONF_FILE"
     chmod 600 "$TARGET_CONF_FILE"
@@ -162,9 +143,9 @@ for id in "${INSTANCE_IDS[@]}"; do
         warn "  systemctl restart $SVC"
     fi
 
-    # Khong cai /etc/logrotate.d cho error/slow log: daemon logrotate chay root
-    # va trung voi rotate_mariadb_log_<ID>.sh cua script 08. Xoa file legacy do
-    # project tung sinh; audit log van tu rotate theo server_audit_* trong my.cnf.
+    # Không cài /etc/logrotate.d cho error/slow log: logrotate chạy root và trùng với
+    # rotate_mariadb_log_<ID>.sh của script 08. Xóa file legacy do project từng sinh;
+    # audit log vẫn tự rotate theo server_audit_* trong my.cnf.
     LOGROTATE_FILE="/etc/logrotate.d/$(get_service_name "$id")"
     if [ -f "$LOGROTATE_FILE" ]; then
         rm -f "$LOGROTATE_FILE"
