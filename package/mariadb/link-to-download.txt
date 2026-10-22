@@ -1,1 +1,1 @@
-https://drive.google.com/file/d/1hRJrX-__ZqtETR_VUgpDnM06WGQPn3gB/view?usp=drive_link
+https://github.com/QuangHoangNguci/learn_mariadb/releases/download/packages-v1/mariadb-12.3.3-linux-systemd-x86_64.tar.gz

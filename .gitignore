@@ -11,3 +11,8 @@
 # Editor files
 .vscode/
 .idea/
+
+# Bộ cài lớn: đưa lên GitHub Releases, không commit
+package/mariadb/*.tar.gz
+package/maxscale/*.tar.gz
+package/maxscale/*.deb
