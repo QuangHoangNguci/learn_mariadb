@@ -2,7 +2,69 @@
 # Tương ứng scripts/05_prepare_database.sh
 # Galera joiner không init datadir: data sẽ sync từ bootstrap qua SST.
 
-# Tạo datadir rỗng cho instance
 - name: Init datadir rỗng
-  ansible.builtin.include_tasks: datadir_instance.yml
   when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
+  block:
+    - name: Kiểm tra binary, config, datadir
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ inst.install_dir }}/scripts/mariadb-install-db"
+        - "{{ inst.conf_file }}"
+        - "{{ inst.data_dir }}/mysql"
+      register: _dd_st
+
+    - name: Ghi nhận trạng thái file
+      ansible.builtin.set_fact:
+        _dd_ready: "{{ _dd_st.results[0].stat.exists and _dd_st.results[1].stat.exists }}"
+        _dd_inited: "{{ _dd_st.results[2].stat.exists }}"
+
+    # Tránh phá datadir đang dùng
+    - name: Từ chối init khi service đang chạy (fresh)
+      ansible.builtin.fail:
+        msg: "Service {{ inst.service }} đang chạy! Dừng trước khi init: systemctl stop {{ inst.service }}"
+      when: mariadb_svc_running and mariadb_install_mode == 'fresh'
+
+    # Bỏ qua nếu thiếu binary/config, đang chạy (expand) hoặc đã init
+    - name: Init datadir
+      when: _dd_ready and not mariadb_svc_running and not _dd_inited
+      block:
+        - name: Liệt kê file còn sót trong datadir
+          ansible.builtin.find:
+            paths: "{{ inst.data_dir }}"
+            file_type: any
+            hidden: true
+            recurse: false
+          register: _leftover
+
+        # Không xóa datadir lạ khi expand
+        - name: Từ chối xóa dữ liệu bất thường (expand)
+          ansible.builtin.fail:
+            msg: "Datadir {{ inst.data_dir }} có {{ _leftover.matched }} file nhưng không có schema 'mysql'. Kiểm tra thủ công."
+          when: _leftover.matched > 0 and mariadb_install_mode != 'fresh'
+
+        - name: Xóa file rác trong datadir (fresh)
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ _leftover.files }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: mariadb_install_mode == 'fresh'
+
+        - name: Chạy mariadb-install-db
+          ansible.builtin.command: >-
+            {{ inst.install_dir }}/scripts/mariadb-install-db
+            --user={{ inst.user }}
+            --datadir={{ inst.data_dir }}
+            --basedir={{ inst.install_dir }}
+            --defaults-file={{ inst.conf_file }}
+
+        # Datadir chỉ user instance truy cập
+        - name: Phân quyền datadir
+          ansible.builtin.file:
+            path: "{{ inst.data_dir }}"
+            owner: "{{ inst.user }}"
+            group: "{{ inst.user }}"
+            mode: "0750"
+            recurse: true

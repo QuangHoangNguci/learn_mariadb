@@ -53,7 +53,7 @@ loose_slave_connections_needed_for_purge = 0
 
 # connection
 thread_cache_size = 110
-max_connections   = 4000
+max_connections   = {{ inst.max_conn }}
 thread_handling   = pool-of-threads
 thread_pool_size  = {{ inst.thread_pool }}
 thread_pool_dedicated_listener = 1
@@ -81,7 +81,7 @@ innodb_max_dirty_pages_pct   = 30
 innodb_lock_wait_timeout     = 120
 innodb_rollback_on_timeout   = 1
 innodb_flush_method          = O_DIRECT
-innodb_flush_log_at_trx_commit = 2
+innodb_flush_log_at_trx_commit = {{ inst.flush_log }}
 innodb_autoinc_lock_mode     = 2
 innodb_print_all_deadlocks   = 1
 innodb_io_capacity           = {{ inst.io_cap }}
@@ -122,7 +122,7 @@ wsrep_provider_options = "cert.log_conflicts=ON;gcache.size={{ mariadb_gcache_si
 
 wsrep_sst_method          = mariabackup
 wsrep_sst_receive_address = {{ mariadb_node_ip }}:{{ inst.wsrep_sst }}
-wsrep_sst_auth            = {{ mariadb_galera_user_prefix }}:{{ inst.galera_pass }}
+wsrep_sst_auth            = {{ mariadb_galera_user }}:{{ inst.galera_pass }}
 wsrep_slave_threads       = {{ inst.thread_pool }}
 wsrep_gtid_mode           = ON
 wsrep_gtid_domain_id      = {{ inst.gtid_domain_id }}

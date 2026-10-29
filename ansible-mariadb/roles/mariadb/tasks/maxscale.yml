@@ -3,9 +3,10 @@
 # Cài MaxScale trên node, route tới toàn bộ node Galera trong inventory.
 # Chỉ chạy khi mariadb_install_maxscale=true.
 
-# Tính lại thông số instance vì giai đoạn này chạy trong play riêng
-- name: Tính thông số instance
-  ansible.builtin.import_tasks: common.yml
+# inst là host fact, giữ nguyên giữa các play; chỉ tính lại khi chưa có
+- name: Tính thông số instance (bỏ qua nếu play trước đã tính)
+  ansible.builtin.include_tasks: common.yml
+  when: inst is not defined
 
 # MaxScale chạy bằng user riêng, không đăng nhập được
 - name: Tạo user maxscale

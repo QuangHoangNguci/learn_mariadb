@@ -1,0 +1,19 @@
+---
+# Giữ mariadb_backup_keep bản backup mới nhất, xóa bản cũ hơn.
+# Biến đầu vào: _bk_dir (thư mục chứa), _bk_pattern (glob tên backup).
+# Tên backup có hậu tố thời gian nên sắp theo path là đủ.
+- name: Tìm backup cũ
+  ansible.builtin.find:
+    paths: "{{ _bk_dir }}"
+    patterns: "{{ _bk_pattern }}"
+    file_type: any
+    recurse: false
+  register: _bk
+
+- name: Xóa backup quá số lượng giữ
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ (_bk.files | sort(attribute='path', reverse=true))[mariadb_backup_keep | int:] }}"
+  loop_control:
+    label: "{{ item.path }}"

@@ -3,27 +3,153 @@
 # Import schema vsystem + users và đặt mật khẩu root.
 # Chỉ chạy trên standalone hoặc node bootstrap; joiner sync data từ bootstrap.
 
-# Bắt buộc có mật khẩu trước khi init
-- name: Kiểm tra mật khẩu
+- name: Khởi tạo dữ liệu
   when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
-  ansible.builtin.assert:
-    that:
-      - mariadb_admin_pass | length > 0
-      - mariadb_empty_cluster or mariadb_common_pass | length > 0
-      - mariadb_empty_cluster or inst.maxscale_pass | length > 0
-    fail_msg: "Thiếu mariadb_admin_pass / mariadb_common_pass / mariadb_maxscale_pass"
-  no_log: true
+  block:
+    - name: Kiểm tra mật khẩu
+      ansible.builtin.assert:
+        that:
+          - mariadb_admin_pass | length > 0
+          - mariadb_empty_cluster or mariadb_common_pass | length > 0
+          - mariadb_empty_cluster or inst.maxscale_pass | length > 0
+          - mariadb_empty_cluster or 'CHANGE_ME' not in [mariadb_common_pass, inst.maxscale_pass]
+        fail_msg: "Thiếu hoặc còn là CHANGE_ME: mariadb_admin_pass / mariadb_common_pass / mariadb_maxscale_pass"
+      no_log: true
 
-# Replica/DR: data + users đến từ primary qua replication, import dễ bị trùng
-- name: Cảnh báo import trên replica
-  ansible.builtin.pause:
-    prompt: "Topology {{ mariadb_topology }} (replica): import schema+users có thể TRÙNG với data replicate từ primary. Nên đặt mariadb_empty_cluster=true. Nhấn Enter để tiếp tục, Ctrl+C để hủy"
-  when:
-    - not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
-    - mariadb_replica_mode and not mariadb_empty_cluster
-    - not (mariadb_assume_yes | default(false))
+    # Replica/DR: data + users đến từ primary qua replication, import dễ bị trùng
+    - name: Cảnh báo import trên replica
+      ansible.builtin.pause:
+        prompt: "Topology {{ mariadb_topology }} (replica): import schema+users có thể TRÙNG với data replicate từ primary. Nên đặt mariadb_empty_cluster=true. Nhấn Enter để tiếp tục, Ctrl+C để hủy"
+      when:
+        - mariadb_replica_mode and not mariadb_empty_cluster
+        - not (mariadb_assume_yes | bool)
 
-# Import schema/users cho instance
-- name: Khởi tạo dữ liệu instance
-  ansible.builtin.include_tasks: init_instance.yml
-  when: not (mariadb_galera_enabled and mariadb_node_role == 'joiner')
+    # Xác định instance đã init/join cluster chưa (tra theo tên file)
+    - name: Kiểm tra trạng thái datadir
+      ansible.builtin.stat:
+        path: "{{ inst.data_dir }}/{{ item }}"
+      loop: [mysql, grastate.dat, .ansible_init_done]
+      register: _init_st
+
+    - name: Ghi nhận trạng thái datadir
+      ansible.builtin.set_fact:
+        _init: "{{ dict(_init_st.results | map(attribute='item') | zip(_init_st.results | map(attribute='stat.exists'))) }}"
+
+    # Tránh phá datadir đang dùng
+    - name: Từ chối init khi service đang chạy (fresh)
+      ansible.builtin.fail:
+        msg: "Service {{ inst.service }} đang chạy! Dừng trước khi init: systemctl stop {{ inst.service }}"
+      when: mariadb_svc_running and mariadb_install_mode == 'fresh' and not _init['.ansible_init_done']
+
+    # Bỏ qua nếu chưa init datadir (05), đã join cluster (grastate.dat), đang chạy hoặc đã init bằng Ansible
+    - name: Import schema/users và đặt mật khẩu root
+      when:
+        - _init['mysql']
+        - not _init['.ansible_init_done']
+        - not (mariadb_galera_enabled and _init['grastate.dat'])
+        - not mariadb_svc_running
+      vars:
+        _mariadb: "{{ inst.install_dir }}/bin/mariadb"
+        # Escape cho chuỗi SQL '...'
+        _esc_admin: "{{ mariadb_admin_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
+        _esc_common: "{{ mariadb_common_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
+        _esc_galera: "{{ inst.galera_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
+        _esc_maxscale: "{{ inst.maxscale_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
+      block:
+        - name: Xóa socket cũ
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ inst.socket }}"
+            - "{{ inst.data_dir }}/init.error.log"
+
+        # wsrep=OFF + skip-networking để không ảnh hưởng cluster
+        - name: Chạy mariadbd tạm (safe-mode)
+          ansible.builtin.shell: |
+            nohup {{ inst.install_dir }}/bin/mariadbd \
+              --defaults-file={{ inst.conf_file }} \
+              --user={{ inst.user }} \
+              --datadir={{ inst.data_dir }} \
+              --socket={{ inst.socket }} \
+              --skip-networking \
+              --wsrep_on=OFF \
+              --log-error={{ inst.data_dir }}/init.error.log >/dev/null 2>&1 &
+            echo $!
+          register: _tmp_pid
+          changed_when: true
+
+        - name: Chờ mariadbd sẵn sàng (tối đa 90s)
+          ansible.builtin.command: "{{ _mariadb }} -u root -S {{ inst.socket }} -e 'SELECT 1'"
+          register: _ready
+          until: _ready.rc == 0
+          retries: 45
+          delay: 2
+          changed_when: false
+
+        # Tránh import schema hai lần
+        - name: Kiểm tra schema vsystem đã có chưa
+          ansible.builtin.command: "{{ _mariadb }} -u root -S {{ inst.socket }} -Nse \"SHOW DATABASES LIKE 'vsystem'\""
+          register: _vsystem
+          changed_when: false
+          when: not mariadb_empty_cluster
+
+        - name: Import schema vsystem
+          ansible.builtin.command:
+            argv: ["{{ _mariadb }}", "-u", "root", "-S", "{{ inst.socket }}", "--init-command=SET sql_log_bin=0"]
+            stdin: "{{ lookup('ansible.builtin.file', mariadb_setup_sql_dir ~ '/vsystem.sql') }}"
+          when: not mariadb_empty_cluster and _vsystem.stdout != 'vsystem'
+
+        # users.sql dùng CREATE USER IF NOT EXISTS nên luôn chạy; thay placeholder bằng giá trị đã escape
+        - name: Import users
+          ansible.builtin.command:
+            argv: ["{{ _mariadb }}", "-u", "root", "-S", "{{ inst.socket }}"]
+            stdin: >-
+              {{ lookup('ansible.builtin.file', mariadb_setup_sql_dir ~ '/users.sql')
+                 | replace('${GALERA_USER}', mariadb_galera_user)
+                 | replace('${GALERA_PASS}', _esc_galera)
+                 | replace('${ADMIN_PASS}', _esc_admin)
+                 | replace('${COMMON_PASS}', _esc_common)
+                 | replace('${MAXSCALE_PASS}', _esc_maxscale) }}
+          no_log: true
+          when: not mariadb_empty_cluster
+
+        - name: Đặt mật khẩu root
+          ansible.builtin.command:
+            argv: ["{{ _mariadb }}", "-u", "root", "-S", "{{ inst.socket }}"]
+            stdin: "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ _esc_admin }}'; FLUSH PRIVILEGES;"
+          no_log: true
+
+        - name: Tắt mariadbd tạm
+          ansible.builtin.command: "{{ _mariadb }} -u root -S {{ inst.socket }} -e 'SHUTDOWN'"
+          environment:
+            MYSQL_PWD: "{{ mariadb_admin_pass }}"
+          no_log: true
+          failed_when: false
+
+        - name: Chờ tiến trình tạm thoát
+          ansible.builtin.wait_for:
+            path: "/proc/{{ _tmp_pid.stdout | trim }}"
+            state: absent
+            timeout: 120
+
+        # File đánh dấu để chạy lại không init lần nữa
+        - name: Đánh dấu đã init
+          ansible.builtin.file:
+            path: "{{ inst.data_dir }}/.ansible_init_done"
+            state: touch
+            owner: "{{ inst.user }}"
+            group: "{{ inst.user }}"
+            mode: "0600"
+            modification_time: preserve
+            access_time: preserve
+
+      rescue:
+        - name: Dọn mariadbd tạm bị treo
+          ansible.builtin.shell: kill -9 {{ _tmp_pid.stdout | trim }} 2>/dev/null || true
+          when: _tmp_pid is defined and _tmp_pid.stdout is defined
+          changed_when: false
+
+        - name: Báo lỗi init
+          ansible.builtin.fail:
+            msg: "Init instance thất bại. Xem {{ inst.data_dir }}/init.error.log"

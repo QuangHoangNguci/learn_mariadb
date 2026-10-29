@@ -1,25 +1,71 @@
 ---
 # Tương ứng scripts/04_enable_mariadb_service.sh
 # Chỉ sinh unit systemd, không enable / start (start ở start.yml).
+# jemalloc lấy từ mariadb_jemalloc_path (libs.yml).
 
-# Dùng cho LD_PRELOAD trong unit
-- name: Tìm đường dẫn jemalloc
-  ansible.builtin.shell: ldconfig -p | grep jemalloc | head -n1 | awk '{print $NF}'
-  register: _jemalloc
-  changed_when: false
-  failed_when: false
-
-# Unit vẫn chạy nhưng không dùng jemalloc
 - name: Cảnh báo nếu thiếu jemalloc
   ansible.builtin.debug:
     msg: "jemalloc không tìm thấy - bỏ qua LD_PRELOAD"
-  when: _jemalloc.stdout | length == 0
+  when: mariadb_jemalloc_path | length == 0
 
-# Tạo service cho instance
-- name: Sinh unit systemd
-  ansible.builtin.include_tasks: service_instance.yml
+- name: Kiểm tra binary, config, unit
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ inst.install_dir }}/bin"
+    - "{{ inst.conf_file }}"
+    - "/etc/systemd/system/{{ inst.service }}.service"
+  register: _svc_st
 
-# Nhận unit mới
-- name: Reload systemd
-  ansible.builtin.systemd:
-    daemon_reload: true
+- name: Tạo unit
+  vars:
+    _has_bin: "{{ _svc_st.results[0].stat.exists }}"
+    _has_conf: "{{ _svc_st.results[1].stat.exists }}"
+    _has_unit: "{{ _svc_st.results[2].stat.exists }}"
+  when: _has_bin and _has_conf and not (_has_unit and mariadb_install_mode == 'expand')
+  block:
+    # Tarball build với prefix /usr/local/mysql nên các script wsrep/galera trong bin/ hardcode
+    # đường dẫn đó; phải đổi sang thư mục cài thực tế, nếu không galera_recovery / SST sẽ lỗi.
+    - name: Vá script helper Galera (build-prefix -> install_dir)
+      when: mariadb_galera_enabled
+      block:
+        - name: Tìm script helper
+          ansible.builtin.find:
+            paths: "{{ inst.install_dir }}/bin"
+            patterns: [galera_recovery, galera_new_cluster, wsrep_sst_common, wsrep_sst_mariabackup, wsrep_sst_rsync, wsrep_sst_mysqldump]
+          register: _helpers
+
+        - name: Đổi đường dẫn /usr/local/mysql/bin
+          ansible.builtin.replace:
+            path: "{{ item.path }}"
+            regexp: '/usr/local/mysql/bin'
+            replace: "{{ inst.install_dir }}/bin"
+          loop: "{{ _helpers.files }}"
+          loop_control:
+            label: "{{ item.path }}"
+
+        - name: Trỏ print_defaults của galera_recovery đúng chỗ
+          ansible.builtin.replace:
+            path: "{{ inst.install_dir }}/bin/galera_recovery"
+            regexp: '^print_defaults=.*'
+            replace: 'print_defaults="{{ inst.install_dir }}/bin/my_print_defaults"'
+          when: _helpers.files | selectattr('path', 'search', 'galera_recovery$') | list | length > 0
+
+    # backup chỉ tạo khi unit đã có và nội dung đổi; daemon-reload qua handler
+    - name: Ghi unit systemd
+      ansible.builtin.template:
+        src: mariadb.service.j2
+        dest: "/etc/systemd/system/{{ inst.service }}.service"
+        mode: "0644"
+        backup: true
+      notify: Reload systemd
+
+    - name: Dọn backup unit cũ
+      ansible.builtin.include_tasks: backup_cleanup.yml
+      vars:
+        _bk_dir: /etc/systemd/system
+        _bk_pattern: "{{ inst.service }}.service.*~"
+
+# Nhận unit mới trước khi sang giai đoạn sau
+- name: Áp dụng unit ngay
+  ansible.builtin.meta: flush_handlers

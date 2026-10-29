@@ -1,3 +1,7 @@
 ---
 - name: Reload sysctl
   ansible.builtin.command: sysctl -p /etc/sysctl.d/99-mariadb-tuning.conf
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

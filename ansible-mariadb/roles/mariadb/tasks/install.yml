@@ -1,51 +1,130 @@
 ---
 # Tương ứng scripts/02_install_mariadb_binary.sh
+# Giải nén binary MariaDB thẳng vào thư mục cài, tạo user + thư mục dữ liệu.
+# _mariadb_tarball do preflight.yml tìm sẵn trên controller.
 
-# Lấy gói binary offline
-- name: Tìm tarball MariaDB trên controller
-  ansible.builtin.set_fact:
-    _mariadb_tarball: "{{ lookup('ansible.builtin.fileglob', mariadb_package_dir ~ '/mariadb/*.tar.gz', wantlist=True) | sort | first | default('') }}"
-
-# Báo lỗi sớm nếu thiếu gói
-- name: Kiểm tra có tarball
-  ansible.builtin.assert:
-    that: _mariadb_tarball | length > 0
-    fail_msg: "Không thấy mariadb-*.tar.gz trong {{ mariadb_package_dir }}/mariadb"
-
-# Phân biệt instance mới/đã cài
 - name: Kiểm tra thư mục cài hiện có
   ansible.builtin.stat:
     path: "{{ inst.install_dir }}"
   register: _install_stat
 
-# fresh: cài lại; expand: chỉ cài khi chưa có thư mục cài
+# fresh: cài lại | expand: chỉ cài khi chưa có thư mục cài
 - name: Xác định có cần cài không
   ansible.builtin.set_fact:
     _need_install: "{{ mariadb_install_mode == 'fresh' or not _install_stat.stat.exists }}"
 
-# Chỉ chạy khi cần cài
-- name: Giải nén MariaDB và cài instance
+- name: Cài binary MariaDB
   when: _need_install
   block:
-    # Dữ liệu để kiểm tra trùng port
+    - name: Từ chối cài đè khi service đang chạy
+      ansible.builtin.fail:
+        msg: "Service {{ inst.service }} đang chạy! Dừng trước khi cài fresh (systemctl stop {{ inst.service }}) hoặc chạy lại với -e mariadb_install_mode=expand"
+      when: mariadb_svc_running and mariadb_install_mode == 'fresh'
+
+    # Tránh xung đột port với tiến trình khác
     - name: Xem các port đang listen
       ansible.builtin.command: ss -lnt
       register: _ss
       changed_when: false
 
-    # Chuẩn bị binary nguồn
-    - name: Giải nén tarball vào thư mục tạm
-      ansible.builtin.include_tasks: install_extract.yml
+    - name: Kiểm tra port chưa bị chiếm
+      vars:
+        _listening: "{{ _ss.stdout_lines[1:] | map('split') | map(attribute=3) | map('regex_replace', '^.*:', '') | list }}"
+        _need: >-
+          {{ [inst.port, inst.mgnt] + ([inst.wsrep_listen, inst.wsrep_sst, inst.wsrep_ist] if mariadb_galera_enabled else []) }}
+      ansible.builtin.assert:
+        that: (_need | map('string') | list) | intersect(_listening) | length == 0
+        fail_msg: "Port {{ _need | map('string') | list | intersect(_listening) }} đã bị chiếm"
 
-    # Cài instance
-    - name: Cài instance
-      ansible.builtin.include_tasks: install_instance.yml
+    # Giữ bản cũ để rollback, chỉ giữ mariadb_backup_keep bản mới nhất
+    - name: Backup thư mục cài cũ
+      ansible.builtin.command: mv {{ inst.install_dir }} {{ inst.install_dir }}.bak.{{ ansible_date_time.epoch }}
+      when: _install_stat.stat.exists
 
-    # Dọn rác sau khi cài
-    - name: Xóa thư mục giải nén tạm
+    - name: Dọn backup thư mục cài cũ
+      ansible.builtin.include_tasks: backup_cleanup.yml
+      vars:
+        _bk_dir: "{{ inst.install_dir | dirname }}"
+        _bk_pattern: "{{ inst.install_dir | basename }}.bak.*"
+
+    - name: Tạo user hệ thống
+      ansible.builtin.user:
+        name: "{{ inst.user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Tạo thư mục cài
       ansible.builtin.file:
-        path: /tmp/mariadb_install
-        state: absent
+        path: "{{ inst.install_dir }}"
+        state: directory
+        mode: "0755"
+
+    # Tarball có đúng 1 thư mục gốc (mariadb-<ver>-linux-...), bỏ nó để giải thẳng vào install_dir
+    - name: Giải nén MariaDB vào thư mục cài
+      ansible.builtin.unarchive:
+        src: "{{ _mariadb_tarball }}"
+        dest: "{{ inst.install_dir }}"
+        extra_opts: [--strip-components=1]
+        creates: "{{ inst.install_dir }}/bin/mariadbd"
+
+    - name: Tạo thư mục data/tmp/log/binlog
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ inst.user }}"
+        group: "{{ inst.user }}"
+        mode: "0750"
+      loop:
+        - "{{ inst.data_dir }}"
+        - "{{ inst.tmp_dir }}"
+        - "{{ inst.log_dir }}"
+        - "{{ inst.binlog_dir }}"
+
+    # Thư mục cha (vd /u01/data) phải traverse được để user instance vào thư mục con
+    - name: Mở quyền traverse thư mục cha
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: o+x
+      loop: "{{ [inst.data_dir, inst.tmp_dir, inst.log_dir, inst.binlog_dir] | map('dirname') | unique | reject('equalto', '/') | list }}"
+
+    - name: Chown thư mục cài
+      ansible.builtin.file:
+        path: "{{ inst.install_dir }}"
+        owner: "{{ inst.user }}"
+        group: "{{ inst.user }}"
+        recurse: true
+
+    # Chỉ vá policy nếu có file này
+    - name: Kiểm tra file enterprise.cnf
+      ansible.builtin.stat:
+        path: "{{ inst.install_dir }}/etc/mariadb-enterprise.cnf"
+      register: _ent
+
+    - name: Vá password policy
+      when: _ent.stat.exists
+      block:
+        - name: Xóa cấu hình simple_password_check cũ
+          ansible.builtin.lineinfile:
+            path: "{{ inst.install_dir }}/etc/mariadb-enterprise.cnf"
+            regexp: simple_password_check
+            state: absent
+
+        - name: Thêm password policy
+          ansible.builtin.blockinfile:
+            path: "{{ inst.install_dir }}/etc/mariadb-enterprise.cnf"
+            marker: "# ===== {mark} AUTO PASSWORD POLICY ====="
+            block: |
+              simple_password_check_digits=0
+              simple_password_check_letters_same_case=0
+              simple_password_check_minimal_length=6
+              simple_password_check_other_characters=0
+
+    # Phát hiện thiếu thư viện/sai kiến trúc ngay
+    - name: Kiểm tra binary chạy được
+      ansible.builtin.command: "{{ inst.install_dir }}/bin/mariadbd --version"
+      changed_when: false
 
 # Dùng client mariadb từ shell
 - name: Thêm PATH client MariaDB

@@ -7,6 +7,11 @@
   ansible.builtin.import_tasks: common.yml
   tags: [always]
 
+# Kiểm tra gói/SQL trên máy chạy Ansible một lần, trước khi đụng tới bất kỳ node nào
+- name: Kiểm tra điều kiện trên controller
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [os, install, init]
+
 # Chuẩn bị OS: gói offline, firewall, tuning kernel
 - name: Chuẩn bị hệ điều hành
   ansible.builtin.import_tasks: os_prepare.yml

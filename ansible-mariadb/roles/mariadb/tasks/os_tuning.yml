@@ -18,12 +18,14 @@
 - name: Tắt Transparent Huge Pages
   when: mariadb_enable_thp_disable
   block:
-    # Có hiệu lực không cần reboot
+    # Có hiệu lực không cần reboot; chỉ ghi (và báo changed) khi chưa ở never
     - name: Tắt THP ngay (runtime)
       ansible.builtin.shell: |
-        echo never > /sys/kernel/mm/transparent_hugepage/enabled
-        echo never > /sys/kernel/mm/transparent_hugepage/defrag
-      changed_when: false
+        thp=/sys/kernel/mm/transparent_hugepage
+        grep -q '\[never\]' $thp/enabled && grep -q '\[never\]' $thp/defrag && exit 0
+        echo never > $thp/enabled && echo never > $thp/defrag && echo changed
+      register: _thp
+      changed_when: "'changed' in _thp.stdout"
       failed_when: false
 
     # Giữ cấu hình sau reboot

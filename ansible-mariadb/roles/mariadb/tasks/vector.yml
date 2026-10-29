@@ -3,9 +3,10 @@
 # Cài Vector để đọc log MariaDB và đẩy sang Kafka / Elasticsearch.
 # Chỉ chạy khi mariadb_install_vector=true.
 
-# Tính lại thông số instance vì giai đoạn này chạy trong play riêng
-- name: Tính thông số instance
-  ansible.builtin.import_tasks: common.yml
+# inst là host fact, giữ nguyên giữa các play; chỉ tính lại khi chưa có
+- name: Tính thông số instance (bỏ qua nếu play trước đã tính)
+  ansible.builtin.include_tasks: common.yml
+  when: inst is not defined
 
 # Group chung để Vector chỉ-đọc log MariaDB
 - name: Tạo group đọc log MariaDB

@@ -1,8 +1,10 @@
 ---
 # Giá trị mặc định cho role mariadb. Ghi đè trong projects/inventory/group_vars/.
 
-# Thư mục gốc của repo (playbook nằm ở ansible-mariadb/projects/)
-mariadb_repo_dir: "{{ playbook_dir }}/../.."
+# Thư mục gốc của repo (playbook nằm ở ansible-mariadb/projects/).
+# Role không bắt buộc đúng cấu trúc này: ghi đè trực tiếp mariadb_package_dir / mariadb_setup_sql_dir
+# bằng đường dẫn tuyệt đối trên máy chạy Ansible nếu để ở nơi khác.
+mariadb_repo_dir: "{{ (playbook_dir ~ '/../..') | realpath }}"
 mariadb_package_dir: "{{ mariadb_repo_dir }}/package"
 mariadb_setup_sql_dir: "{{ mariadb_repo_dir }}/setup/mariadb/Install_Mariadb"
 
@@ -10,6 +12,8 @@ mariadb_setup_sql_dir: "{{ mariadb_repo_dir }}/setup/mariadb/Install_Mariadb"
 mariadb_topology: cluster
 # fresh: ghi đè cài mới | expand: giữ nguyên instance đang chạy
 mariadb_install_mode: fresh
+# true: không hỏi xác nhận (pause) khi chạy tự động / CI
+mariadb_assume_yes: false
 
 # Nhóm inventory chứa các node; tên host phải là IP của node
 mariadb_cluster_group: mariadb
@@ -42,7 +46,7 @@ mariadb_log_group: mariadb_log_readers
 # Galera
 mariadb_node_name_prefix: db
 mariadb_wsrep_base_port: 1030
-mariadb_galera_user_prefix: galera
+mariadb_galera_user: galera       # user SST (wsrep_sst_auth), phải khớp users.sql
 mariadb_galera_pass: ""
 mariadb_gcache_size: 2048M
 mariadb_server_id: 1
@@ -53,6 +57,16 @@ mariadb_reserved_ram_pct: 25
 mariadb_disk_type: auto        # auto | ssd | hdd
 mariadb_expire_logs_days: 3
 mariadb_max_open_files: 1000000
+# auto: min(RAM_MB/8, 4000), tối thiểu 200 | hoặc số cụ thể
+mariadb_max_connections: auto
+# auto: 2 khi Galera (mất tối đa 1s txn khi OS crash, cluster còn bản sao), 1 khi single/dr | hoặc 0/1/2
+mariadb_flush_log_at_trx_commit: auto
+# RAM tối thiểu của node (MB); dưới mức này role dừng để tránh OOM
+mariadb_min_ram_mb: 2048
+# Số bản backup (install dir, my.cnf, unit) giữ lại, bản cũ hơn bị xóa
+mariadb_backup_keep: 2
+# Số node kỳ vọng trong cluster khi xác nhận cuối (đổi khi chạy --limit)
+mariadb_expected_cluster_size: "{{ mariadb_cluster_nodes | length }}"
 
 # Mật khẩu khi khởi tạo (script 06)
 mariadb_admin_pass: ""
@@ -76,6 +90,8 @@ mariadb_os_package_subdirs: "{{ ['os'] + (['os-jammy'] if (ansible_distribution_
 # Gói không cài để tránh xung đột với MySQL/MariaDB sẵn có
 mariadb_os_package_skip_regex: 'mysql-common|mariadb-common|libmariadb3'
 mariadb_os_package_stage_dir: /tmp/mariadb_os_pkgs
+# false: chỉ copy + cài gói OS khi node còn thiếu jemalloc/numactl/iptables
+mariadb_os_packages_force: false
 
 # --- MaxScale (07) và Vector (09): bật bằng biến trong playbook ---
 mariadb_install_maxscale: false

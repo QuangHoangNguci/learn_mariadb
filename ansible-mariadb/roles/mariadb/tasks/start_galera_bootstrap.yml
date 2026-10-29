@@ -1,23 +1,32 @@
 ---
-# Không thao tác khi instance đang chạy
-- name: "kiểm tra service đang chạy"
+# Không thao tác khi instance đang chạy (kiểm tra trực tiếp vì trạng thái có thể đã đổi từ lúc gather)
+- name: Kiểm tra service đang chạy
   ansible.builtin.command: systemctl is-active --quiet {{ inst.service }}
   register: _active
   changed_when: false
   failed_when: false
 
-# Unit đọc EnvironmentFile này để thêm --wsrep-new-cluster (giống galera_new_cluster)
-- name: "bootstrap cluster mới"
+# Unit đọc EnvironmentFile này để thêm --wsrep-new-cluster (giống galera_new_cluster).
+# Đặt trong run_dir (tmpfs, chỉ user instance vào được) thay vì /tmp.
+- name: Bootstrap cluster mới
   when: _active.rc != 0
   block:
-    # Unit đọc cờ này để bootstrap
+    - name: Tạo thư mục runtime
+      ansible.builtin.file:
+        path: "{{ inst.run_dir }}"
+        state: directory
+        owner: "{{ inst.user }}"
+        group: "{{ inst.user }}"
+        mode: "0750"
+
     - name: Đặt cờ wsrep-new-cluster
       ansible.builtin.copy:
-        dest: "/tmp/wsrep-new-cluster"
+        dest: "{{ inst.run_dir }}/wsrep-new-cluster"
         content: "_WSREP_NEW_CLUSTER=--wsrep-new-cluster\n"
-        mode: "0644"
+        owner: root
+        group: root
+        mode: "0600"
 
-    # Khởi tạo cluster mới
     - name: Start instance (bootstrap)
       ansible.builtin.systemd:
         name: "{{ inst.service }}"
@@ -28,25 +37,17 @@
     # Xóa cờ để lần restart sau không bootstrap lại cluster mới
     - name: Xóa cờ wsrep-new-cluster
       ansible.builtin.file:
-        path: "/tmp/wsrep-new-cluster"
+        path: "{{ inst.run_dir }}/wsrep-new-cluster"
         state: absent
 
-# Tự chạy lại sau reboot
-- name: "bật service khi reboot"
+- name: Bật service khi reboot
   ansible.builtin.systemd:
     name: "{{ inst.service }}"
     enabled: true
 
-# Đợi node đồng bộ xong mới sang bước sau
-- name: "chờ node Synced"
-  ansible.builtin.command: >-
-    {{ inst.install_dir }}/bin/mariadb -u root -S {{ inst.socket }} -Nse
-    "SHOW STATUS LIKE 'wsrep_local_state_comment'"
-  environment:
-    MYSQL_PWD: "{{ mariadb_admin_pass }}"
-  register: _state
-  until: "'Synced' in _state.stdout"
-  retries: 30
-  delay: 5
-  changed_when: false
-  no_log: true
+- name: Chờ bootstrap Synced
+  ansible.builtin.include_tasks: wait_synced.yml
+  vars:
+    _wsrep_min_size: 1
+    _wsrep_retries: 30
+    _wsrep_delay: 5

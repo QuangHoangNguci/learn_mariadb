@@ -13,6 +13,8 @@
       - mariadb_reserved_ram_pct | int <= 90
       - mariadb_disk_type in ['auto', 'ssd', 'hdd']
       - mariadb_node_role in ['bootstrap', 'joiner']
+      - mariadb_max_connections == 'auto' or (mariadb_max_connections | int) >= 10
+      - mariadb_flush_log_at_trx_commit == 'auto' or (mariadb_flush_log_at_trx_commit | string) in ['0', '1', '2']
     fail_msg: "Biến mariadb_* không hợp lệ (xem roles/mariadb/defaults/main.yml)"
 
 # Đặt cờ galera/replica để các task sau dùng
@@ -20,6 +22,15 @@
   ansible.builtin.set_fact:
     mariadb_galera_enabled: "{{ mariadb_topology in ['cluster', 'dr-cluster'] }}"
     mariadb_replica_mode: "{{ mariadb_topology in ['dr', 'dr-cluster'] }}"
+
+# Mật khẩu mẫu CHANGE_ME phải được thay trước khi chạy
+- name: Kiểm tra mật khẩu đã được đổi
+  ansible.builtin.assert:
+    that:
+      - mariadb_admin_pass != 'CHANGE_ME'
+      - mariadb_galera_pass != 'CHANGE_ME' or not mariadb_galera_enabled
+    fail_msg: "Đổi mariadb_admin_pass / mariadb_galera_pass (đang là CHANGE_ME) trong group_vars/mariadb.yml"
+  no_log: true
 
 # Node phải nằm trong nhóm inventory khi chạy Galera
 - name: Kiểm tra điều kiện riêng của Galera / replica
@@ -48,6 +59,12 @@
     fail_msg: "mariadb_install_maxscale=true cần topology cluster/dr-cluster, mariadb_maxscale_pass và ít nhất 1 cổng max_rw/max_ro"
   when: mariadb_install_maxscale | bool
 
+# Chặn node quá nhỏ để buffer pool + gcache không gây OOM
+- name: Kiểm tra RAM tối thiểu
+  ansible.builtin.assert:
+    that: ansible_memtotal_mb | int >= mariadb_min_ram_mb | int
+    fail_msg: "Node chỉ có {{ ansible_memtotal_mb }} MB RAM, yêu cầu tối thiểu {{ mariadb_min_ram_mb }} MB (mariadb_min_ram_mb)"
+
 # Lấy RAM/CPU/loại đĩa để chia buffer pool và tuning I/O
 - name: Tính tài nguyên host
   ansible.builtin.set_fact:
@@ -69,6 +86,12 @@
     _last: "{{ mariadb_node_ip.split('.')[-1] }}"
     _octet: "{{ _last | int if _last is match('^[0-9]+$') else 100 }}"
     _server_id: "{{ mariadb_server_id | int if mariadb_galera_enabled else _octet | int * 100 }}"
+    _max_conn: >-
+      {{ ([[mariadb_ram_mb | int // 8, 200] | max, 4000] | min) if mariadb_max_connections == 'auto'
+         else mariadb_max_connections | int }}
+    _flush_log: >-
+      {{ (2 if mariadb_galera_enabled else 1) if mariadb_flush_log_at_trx_commit == 'auto'
+         else mariadb_flush_log_at_trx_commit | int }}
     _node_index: "{{ mariadb_cluster_nodes.index(mariadb_node_ip) + 1 if mariadb_node_ip in mariadb_cluster_nodes else 0 }}"
   ansible.builtin.set_fact:
     inst:
@@ -90,6 +113,10 @@
       log_dir: "{{ mariadb_log_dir }}"
       binlog_dir: "{{ mariadb_binlog_dir }}"
       socket: "{{ mariadb_data_dir }}/mariadb.sock"
+      # Cờ bootstrap / start position của Galera (tmpfs, systemd RuntimeDirectory, chỉ user instance ghi được)
+      run_dir: "/run/{{ mariadb_instance_name }}"
+      max_conn: "{{ _max_conn | int }}"
+      flush_log: "{{ _flush_log | int }}"
       bp_mb: "{{ _bp | int }}"
       bp_instances: "{{ [[(_bp | int) // 1024, 1] | max, 8] | min }}"
       log_file_mb: "{{ [[(_bp | int) // 4, 256] | max, 2048] | min }}"
@@ -110,7 +137,19 @@
     _ports: >-
       {{ ([inst.port, inst.mgnt, inst.max_rw, inst.max_ro]
          + ([inst.wsrep_listen, inst.wsrep_sst, inst.wsrep_ist] if mariadb_galera_enabled else []))
-         | reject('equalto', 0) | list }}
+         | map('int') | reject('equalto', 0) | list }}
   ansible.builtin.assert:
     that: _ports | length == _ports | unique | length
     fail_msg: "Có port bị trùng: {{ _ports | sort }}"
+
+# Phát hiện jemalloc / numactl / iptables một lần, dùng lại ở config / service / os_packages
+- name: Phát hiện thư viện phụ thuộc
+  ansible.builtin.include_tasks: libs.yml
+
+# Một lần gọi systemctl thay cho nhiều lần `systemctl is-active` ở các giai đoạn sau
+- name: Lấy trạng thái service
+  ansible.builtin.service_facts:
+
+- name: Ghi nhận instance có đang chạy không
+  ansible.builtin.set_fact:
+    mariadb_svc_running: "{{ (ansible_facts.services[inst.service ~ '.service'].state | default('stopped')) == 'running' }}"

@@ -15,20 +15,15 @@
     label: "{{ item.ip }}:{{ item.port }}"
   when: item.ip | length > 0
 
-# Chỉ node quản trị truy cập được
+# Chỉ node quản trị truy cập được (1 rule multiport cho mỗi node thay vì 1 rule mỗi port)
 - name: Cho phép node quản trị vào SSH và các port MariaDB
-  vars:
-    _mgmt_ports: >-
-      {{ [22, inst.port, inst.mgnt] }}
   ansible.builtin.iptables:
     chain: INPUT
-    source: "{{ item.0 }}"
+    source: "{{ item }}"
     protocol: tcp
-    destination_port: "{{ item.1 | string }}"
+    destination_ports: "{{ ['22', inst.port | string, inst.mgnt | string] }}"
     jump: ACCEPT
-  loop: "{{ mariadb_mgmt_nodes | product(_mgmt_ports) | list }}"
-  loop_control:
-    label: "{{ item.0 }}:{{ item.1 }}"
+  loop: "{{ mariadb_mgmt_nodes }}"
 
 # Replication (DR) và Galera (WSREP/SST/IST): cho phép toàn bộ traffic giữa các node
 - name: Cho phép traffic giữa các node primary / cluster
@@ -50,7 +45,14 @@
     state: directory
     mode: "0755"
 
-# Giữ rule sau reboot
-- name: Lưu rule iptables
-  ansible.builtin.shell: iptables-save > {{ '/etc/iptables/rules.v4' if ansible_os_family == 'Debian' else '/etc/sysconfig/iptables' }}
+# Giữ rule sau reboot. Bỏ dòng comment (có timestamp) để copy idempotent, chỉ báo changed khi rule đổi.
+- name: Đọc rule iptables hiện tại
+  ansible.builtin.command: iptables-save
+  register: _iptables_rules
   changed_when: false
+
+- name: Lưu rule iptables
+  ansible.builtin.copy:
+    dest: "{{ '/etc/iptables/rules.v4' if ansible_os_family == 'Debian' else '/etc/sysconfig/iptables' }}"
+    content: "{{ _iptables_rules.stdout_lines | reject('match', '^#') | join('\n') }}\n"
+    mode: "0644"

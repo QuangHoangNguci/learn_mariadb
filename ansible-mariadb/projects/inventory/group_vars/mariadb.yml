@@ -13,11 +13,11 @@ mariadb_mgnt_port: 1301          # extra_port
 mariadb_size_gb: 1700
 mariadb_buf_mb: auto             # auto hoặc số MB
 mariadb_cluster_name: money
-mariadb_galera_pass: "CHANGE_ME"
+mariadb_galera_pass: "123123a@"
 # Cổng MaxScale (0 = tắt), chỉ dùng khi mariadb_install_maxscale=true trong playbook
 mariadb_max_rw_port: 4006
 mariadb_max_ro_port: 4016
-mariadb_maxscale_pass: "CHANGE_ME"
+mariadb_maxscale_pass: "123123a@"
 
 # Node đầu tiên trong inventory là bootstrap, các node sau là joiner (không cần khai báo)
 # mariadb_primary_nodes: ["10.254.0.10"]     # bắt buộc với dr / dr-cluster
@@ -34,16 +34,18 @@ mariadb_config_file: /etc/my.cnf
 # Galera
 mariadb_node_name_prefix: db
 mariadb_wsrep_base_port: 1030
-mariadb_galera_user_prefix: galera
+mariadb_galera_user: galera
 mariadb_server_id: 1
 mariadb_gtid_domain_id: 100
 
 # Khởi tạo database 
-mariadb_admin_pass: "CHANGE_ME"
-mariadb_common_pass: "CHANGE_ME"
+mariadb_admin_pass: "123123a@"
+mariadb_common_pass: "123123a@"
 mariadb_empty_cluster: false
 
-# Tuning
+# Tuning (các giá trị khác xem roles/mariadb/defaults/main.yml)
+# mariadb_max_connections: auto
+# mariadb_flush_log_at_trx_commit: auto
 mariadb_reserved_ram_pct: 25
 mariadb_disk_type: auto
 mariadb_expire_logs_days: 3

@@ -9,17 +9,21 @@ Group={{ inst.user }}
 SupplementaryGroups={{ mariadb_log_group }}
 UMask=0027
 
-{% if _jemalloc.stdout | length > 0 %}
-Environment="LD_PRELOAD={{ _jemalloc.stdout }}"
+{% if mariadb_jemalloc_path | length > 0 %}
+Environment="LD_PRELOAD={{ mariadb_jemalloc_path }}"
 {% endif %}
 
 {% if mariadb_galera_enabled %}
-EnvironmentFile=-/tmp/wsrep-new-cluster
-EnvironmentFile=-/tmp/wsrep-start-position
+# /run/<service> do systemd tạo (tmpfs, chỉ user instance vào được), thay cho /tmp
+RuntimeDirectory={{ inst.service }}
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+EnvironmentFile=-{{ inst.run_dir }}/wsrep-new-cluster
+EnvironmentFile=-{{ inst.run_dir }}/wsrep-start-position
 
 ExecStartPre=/bin/sh -c "[ ! -e {{ inst.install_dir }}/bin/galera_recovery ] && VAR= || \
  VAR=`{{ inst.install_dir }}/bin/galera_recovery`; [ $? -eq 0 ] \
- && echo _WSREP_START_POSITION=$VAR > /tmp/wsrep-start-position || exit 1"
+ && echo _WSREP_START_POSITION=$VAR > {{ inst.run_dir }}/wsrep-start-position || exit 1"
 {% endif %}
 
 ExecStart=/usr/bin/numactl --interleave=all {{ inst.install_dir }}/bin/mariadbd \

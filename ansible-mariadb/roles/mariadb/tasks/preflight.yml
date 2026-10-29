@@ -1,0 +1,32 @@
+---
+# Chạy một lần trên controller. Báo lỗi sớm thay vì để từng node tự phát hiện thiếu file.
+# _mariadb_tarball được set_fact run_once nên mọi node dùng chung kết quả.
+- name: Kiểm tra gói MariaDB và file SQL trên controller
+  run_once: true
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Tìm tarball MariaDB
+      ansible.builtin.set_fact:
+        _mariadb_tarball: "{{ lookup('ansible.builtin.fileglob', mariadb_package_dir ~ '/mariadb/*.tar.gz', wantlist=True) | sort | first | default('') }}"
+
+    - name: Kiểm tra có tarball
+      ansible.builtin.assert:
+        that: _mariadb_tarball | length > 0
+        fail_msg: "Không thấy mariadb-*.tar.gz trong {{ mariadb_package_dir }}/mariadb (đặt mariadb_package_dir nếu để ở nơi khác)"
+      when: mariadb_install_mode == 'fresh'
+
+    - name: Kiểm tra file SQL khởi tạo
+      ansible.builtin.stat:
+        path: "{{ mariadb_setup_sql_dir }}/{{ item }}"
+      loop: [vsystem.sql, users.sql]
+      register: _sql_files
+      when: not mariadb_empty_cluster
+
+    - name: Báo lỗi nếu thiếu file SQL
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Thiếu {{ item.item }} trong {{ mariadb_setup_sql_dir }} (hoặc đặt mariadb_empty_cluster=true)"
+      loop: "{{ _sql_files.results | default([]) | selectattr('skipped', 'undefined') | list }}"
+      loop_control:
+        label: "{{ item.item }}"

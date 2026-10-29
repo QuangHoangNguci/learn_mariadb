@@ -1,0 +1,15 @@
+---
+# Xác nhận cuối: cluster đủ mariadb_expected_cluster_size node và đều Synced (chỉ Galera).
+- name: Xác nhận cluster đủ node
+  when: mariadb_galera_enabled
+  block:
+    - name: Chờ đủ số node
+      ansible.builtin.include_tasks: wait_synced.yml
+      vars:
+        _wsrep_min_size: "{{ mariadb_expected_cluster_size }}"
+        _wsrep_retries: 12
+        _wsrep_delay: 5
+
+    - name: Cluster sẵn sàng
+      ansible.builtin.debug:
+        msg: "Cluster {{ inst.cluster_name }} đủ >= {{ mariadb_expected_cluster_size }} node, trạng thái Synced"

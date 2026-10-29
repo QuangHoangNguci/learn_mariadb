@@ -1,0 +1,17 @@
+---
+# Chờ node Synced và cluster đủ _wsrep_min_size node. Biến đầu vào: _wsrep_min_size, _wsrep_retries, _wsrep_delay.
+- name: Chờ node Synced
+  ansible.builtin.command: >-
+    {{ inst.install_dir }}/bin/mariadb -u root -S {{ inst.socket }} -Nse
+    "SHOW STATUS WHERE Variable_name IN ('wsrep_local_state_comment', 'wsrep_cluster_size')"
+  environment:
+    MYSQL_PWD: "{{ mariadb_admin_pass }}"
+  register: _wsrep
+  until: >-
+    _wsrep.rc == 0
+    and (_wsrep.stdout_lines | select('search', '^wsrep_local_state_comment\\s+Synced') | list | length > 0)
+    and ((_wsrep.stdout_lines | select('search', '^wsrep_cluster_size\\s') | list | first | default('x 0')).split()[-1] | int) >= (_wsrep_min_size | int)
+  retries: "{{ _wsrep_retries | default(30) }}"
+  delay: "{{ _wsrep_delay | default(5) }}"
+  changed_when: false
+  no_log: true

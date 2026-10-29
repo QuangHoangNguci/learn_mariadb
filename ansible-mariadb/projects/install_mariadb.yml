@@ -7,10 +7,15 @@
 
 # Mỗi server cài đúng 1 instance MariaDB. Node đầu tiên trong inventory là bootstrap, các node sau là joiner.
 
+# Facts thu thập ở play này (host fact + inst) được dùng lại cho các play sau nên chúng không gather lại.
+# any_errors_fatal: một node lỗi ở bước os/install/config/init thì dừng cả playbook, không để bootstrap
+# chạy khi joiner chưa sẵn sàng.
 - name: Chuẩn bị và cài MariaDB trên các node
   hosts: mariadb
   become: true
+  any_errors_fatal: true
   gather_facts: true
+  gather_subset: [hardware]
   roles:
     - mariadb
 
@@ -27,7 +32,7 @@
 - name: Khởi động node bootstrap
   hosts: mariadb_bootstrap
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [start]
   tasks:
     - ansible.builtin.include_role:
@@ -38,7 +43,7 @@
 - name: Khởi động các node joiner
   hosts: mariadb_joiner
   become: true
-  gather_facts: true
+  gather_facts: false
   serial: 1
   tags: [start]
   tasks:
@@ -46,12 +51,24 @@
         name: mariadb
         tasks_from: start
 
+# Chỉ chạy trên node bootstrap: chờ cluster đủ mariadb_expected_cluster_size node và Synced.
+# Khi chạy --limit một phần node: -e mariadb_expected_cluster_size=<số node>.
+- name: Xác nhận cluster
+  hosts: mariadb_bootstrap
+  become: true
+  gather_facts: false
+  tags: [start]
+  tasks:
+    - ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: verify_cluster
+
 # 07: MaxScale (proxy RW/RO tới cluster). Đổi mariadb_install_maxscale thành true để cài
 # (hoặc -e mariadb_install_maxscale=true). Cần topology cluster và mariadb_max_rw_port/max_ro_port.
 - name: Cài MaxScale
   hosts: mariadb
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [maxscale]
   vars:
     mariadb_install_maxscale: false
@@ -66,7 +83,7 @@
 - name: Cài Vector
   hosts: mariadb
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [vector]
   vars:
     mariadb_install_vector: false

@@ -14,9 +14,10 @@
     path: /etc/mysql
     state: absent
 
-# Tránh xung đột client
+# Dùng apt (không --force-all) để apt tự xử lý phụ thuộc, gói chưa cài thì bỏ qua
 - name: Gỡ gói client MariaDB của OS
-  ansible.builtin.command: dpkg --purge --force-all mariadb-client mariadb-client-core mariadb-common
-  failed_when: false
-  changed_when: false
+  ansible.builtin.apt:
+    name: [mariadb-client, mariadb-client-core, mariadb-common]
+    state: absent
+    purge: true
   when: ansible_os_family == 'Debian'

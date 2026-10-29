@@ -1,0 +1,22 @@
+---
+# Phát hiện jemalloc / numactl / iptables. Kết quả:
+#   mariadb_jemalloc_path  đường dẫn libjemalloc (rỗng nếu thiếu)
+#   mariadb_missing_deps   danh sách gói còn thiếu
+- name: Liệt kê thư viện đã đăng ký
+  ansible.builtin.command: ldconfig -p
+  register: _ldconfig
+  changed_when: false
+
+- name: Kiểm tra numactl / iptables
+  ansible.builtin.shell: command -v {{ item }}
+  loop: [numactl, iptables]
+  register: _bins
+  changed_when: false
+  failed_when: false
+
+- name: Ghi nhận phụ thuộc
+  ansible.builtin.set_fact:
+    mariadb_jemalloc_path: "{{ _ldconfig.stdout_lines | select('search', 'libjemalloc[.]so') | map('regex_replace', '^.*=> ', '') | list | first | default('') }}"
+    mariadb_missing_deps: >-
+      {{ ([] if (_ldconfig.stdout_lines | select('search', 'libjemalloc[.]so') | list | length > 0) else ['jemalloc'])
+         + (_bins.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list) }}

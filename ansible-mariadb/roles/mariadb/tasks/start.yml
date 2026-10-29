@@ -4,9 +4,10 @@
 #   - Galera bootstrap: tạo cluster mới cho từng instance.
 #   - Galera joiner: start, data tự sync (SST) từ bootstrap.
 
-# Tính lại thông số instance vì giai đoạn start chạy trong play riêng
-- name: Tính thông số instance
-  ansible.builtin.import_tasks: common.yml
+# inst là host fact, giữ nguyên giữa các play; chỉ tính lại khi chưa có
+- name: Tính thông số instance (bỏ qua nếu play trước đã tính)
+  ansible.builtin.include_tasks: common.yml
+  when: inst is not defined
 
 # Chọn file theo standalone/bootstrap/joiner
 - name: Chọn cách khởi động

@@ -1,6 +1,15 @@
 ---
+# Joiner chỉ start khi đã thấy node trong cluster (bootstrap, hoặc node khác khi thêm node bằng --limit)
+- name: Chờ node cluster sẵn sàng nhận kết nối Galera
+  vars:
+    _peer: "{{ (groups['mariadb_bootstrap'] | default([])) | default(mariadb_cluster_nodes | difference([mariadb_node_ip]), true) | first }}"
+  ansible.builtin.wait_for:
+    host: "{{ _peer }}"
+    port: "{{ inst.wsrep_listen }}"
+    timeout: 120
+
 # SST có thể rất lâu với dữ liệu lớn nên chạy async (khớp TimeoutStartSec=9000 trong unit)
-- name: "start joiner (sync từ bootstrap qua SST)"
+- name: Start joiner (sync từ bootstrap qua SST)
   ansible.builtin.systemd:
     name: "{{ inst.service }}"
     state: started
@@ -9,16 +18,10 @@
   async: 9100
   poll: 30
 
-# Đợi node đồng bộ xong mới sang bước sau
-- name: "chờ node Synced"
-  ansible.builtin.command: >-
-    {{ inst.install_dir }}/bin/mariadb -u root -S {{ inst.socket }} -Nse
-    "SHOW STATUS LIKE 'wsrep_local_state_comment'"
-  environment:
-    MYSQL_PWD: "{{ mariadb_admin_pass }}"
-  register: _state
-  until: "'Synced' in _state.stdout"
-  retries: 60
-  delay: 10
-  changed_when: false
-  no_log: true
+# Joiner Synced và cluster đã có ít nhất 2 node (chính nó + node đã có)
+- name: Chờ joiner Synced
+  ansible.builtin.include_tasks: wait_synced.yml
+  vars:
+    _wsrep_min_size: 2
+    _wsrep_retries: 60
+    _wsrep_delay: 10
