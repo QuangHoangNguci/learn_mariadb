@@ -4,8 +4,8 @@
 # Chỉ hỗ trợ Debian/RedHat
 - name: Kiểm tra OS được hỗ trợ
   ansible.builtin.assert:
-    that: ansible_os_family in ['Debian', 'RedHat']
-    fail_msg: "Hệ điều hành không được hỗ trợ: {{ ansible_distribution }}"
+    that: ansible_facts['os_family'] in ['Debian', 'RedHat']
+    fail_msg: "Hệ điều hành không được hỗ trợ: {{ ansible_facts['distribution'] }}"
 
 # Tránh xung đột với bản của OS
 - name: Gỡ MariaDB/MySQL mặc định của OS (fresh)
@@ -18,7 +18,7 @@
     name: ufw
     state: absent
     purge: true
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 # Cài jemalloc, numactl, iptables...
 - name: Cài gói offline

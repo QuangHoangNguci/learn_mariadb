@@ -51,10 +51,14 @@
       vars:
         _mariadb: "{{ inst.install_dir }}/bin/mariadb"
         # Escape cho chuỗi SQL '...'
-        _esc_admin: "{{ mariadb_admin_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
-        _esc_common: "{{ mariadb_common_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
-        _esc_galera: "{{ inst.galera_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
-        _esc_maxscale: "{{ inst.maxscale_pass | replace('\\', '\\\\') | replace(\"'\", \"''\") }}"
+        _esc_admin: >-
+          {{ mariadb_admin_pass | replace("\\", "\\\\") | replace("'", "''") }}
+        _esc_common: >-
+          {{ mariadb_common_pass | replace("\\", "\\\\") | replace("'", "''") }}
+        _esc_galera: >-
+          {{ inst.galera_pass | replace("\\", "\\\\") | replace("'", "''") }}
+        _esc_maxscale: >-
+          {{ inst.maxscale_pass | replace("\\", "\\\\") | replace("'", "''") }}
       block:
         - name: Xóa socket cũ
           ansible.builtin.file:

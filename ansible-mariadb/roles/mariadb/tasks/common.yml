@@ -62,18 +62,18 @@
 # Chặn node quá nhỏ để buffer pool + gcache không gây OOM
 - name: Kiểm tra RAM tối thiểu
   ansible.builtin.assert:
-    that: ansible_memtotal_mb | int >= mariadb_min_ram_mb | int
-    fail_msg: "Node chỉ có {{ ansible_memtotal_mb }} MB RAM, yêu cầu tối thiểu {{ mariadb_min_ram_mb }} MB (mariadb_min_ram_mb)"
+    that: ansible_facts['memtotal_mb'] | int >= mariadb_min_ram_mb | int
+    fail_msg: "Node chỉ có {{ ansible_facts['memtotal_mb'] }} MB RAM, yêu cầu tối thiểu {{ mariadb_min_ram_mb }} MB (mariadb_min_ram_mb)"
 
 # Lấy RAM/CPU/loại đĩa để chia buffer pool và tuning I/O
 - name: Tính tài nguyên host
   ansible.builtin.set_fact:
-    mariadb_ram_mb: "{{ ansible_memtotal_mb | int }}"
-    mariadb_cpu: "{{ ansible_processor_nproc | int }}"
+    mariadb_ram_mb: "{{ ansible_facts['memtotal_mb'] | int }}"
+    mariadb_cpu: "{{ ansible_facts['processor_nproc'] | int }}"
     # auto: rotational=0 -> SSD/NVMe, =1 -> HDD
     mariadb_disk_type_eff: >-
       {{ mariadb_disk_type if mariadb_disk_type in ['ssd', 'hdd'] else
-         ('ssd' if (ansible_devices | dict2items
+         ('ssd' if (ansible_facts['devices'] | dict2items
                     | selectattr('key', 'match', '^(sd[a-z]+|nvme[0-9]+n[0-9]+|vd[a-z]+)$')
                     | selectattr('value.rotational', 'equalto', '0') | list | length > 0) else 'hdd') }}
 

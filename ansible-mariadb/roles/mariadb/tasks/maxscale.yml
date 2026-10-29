@@ -240,7 +240,7 @@
     - name: Backup config cũ
       ansible.builtin.copy:
         src: /etc/maxscale.cnf
-        dest: "/etc/maxscale.cnf.bak.{{ ansible_date_time.epoch }}"
+        dest: "/etc/maxscale.cnf.bak.{{ ansible_facts['date_time'].epoch }}"
         remote_src: true
         mode: preserve
       when: _ms_conf.stat.exists

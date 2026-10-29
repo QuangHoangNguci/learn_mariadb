@@ -20,4 +20,4 @@
     name: [mariadb-client, mariadb-client-core, mariadb-common]
     state: absent
     purge: true
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'

@@ -7,7 +7,7 @@
     # Lấy gói offline theo OS
     - name: Liệt kê gói trên controller
       vars:
-        _ext: "{{ 'deb' if ansible_os_family == 'Debian' else 'rpm' }}"
+        _ext: "{{ 'deb' if ansible_facts['os_family'] == 'Debian' else 'rpm' }}"
         _globs: "{{ mariadb_os_package_subdirs | map('regex_replace', '^(.*)$', mariadb_package_dir ~ '/\\1/*.' ~ _ext) | list }}"
       ansible.builtin.set_fact:
         # Bỏ gói trùng với MySQL/MariaDB sẵn có
@@ -35,7 +35,7 @@
       register: _dpkg
       changed_when: "'Setting up' in _dpkg.stdout"
       failed_when: false
-      when: ansible_os_family == 'Debian' and _os_pkg_files | length > 0
+      when: ansible_facts['os_family'] == 'Debian' and _os_pkg_files | length > 0
 
     - name: Cài gói .rpm
       ansible.builtin.yum:
@@ -43,7 +43,7 @@
         state: present
         disable_gpg_check: true
       failed_when: false
-      when: ansible_os_family == 'RedHat' and _os_pkg_files | length > 0
+      when: ansible_facts['os_family'] == 'RedHat' and _os_pkg_files | length > 0
 
     - name: Phát hiện lại phụ thuộc sau khi cài
       ansible.builtin.include_tasks: libs.yml

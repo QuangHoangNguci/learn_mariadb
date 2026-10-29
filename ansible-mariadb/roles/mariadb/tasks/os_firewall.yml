@@ -41,7 +41,7 @@
 # Chuẩn bị nơi lưu rule
 - name: Tạo thư mục lưu rule iptables
   ansible.builtin.file:
-    path: "{{ '/etc/iptables' if ansible_os_family == 'Debian' else '/etc/sysconfig' }}"
+    path: "{{ '/etc/iptables' if ansible_facts['os_family'] == 'Debian' else '/etc/sysconfig' }}"
     state: directory
     mode: "0755"
 
@@ -53,6 +53,6 @@
 
 - name: Lưu rule iptables
   ansible.builtin.copy:
-    dest: "{{ '/etc/iptables/rules.v4' if ansible_os_family == 'Debian' else '/etc/sysconfig/iptables' }}"
+    dest: "{{ '/etc/iptables/rules.v4' if ansible_facts['os_family'] == 'Debian' else '/etc/sysconfig/iptables' }}"
     content: "{{ _iptables_rules.stdout_lines | reject('match', '^#') | join('\n') }}\n"
     mode: "0644"

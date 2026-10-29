@@ -38,7 +38,7 @@
 
     # Giữ bản cũ để rollback, chỉ giữ mariadb_backup_keep bản mới nhất
     - name: Backup thư mục cài cũ
-      ansible.builtin.command: mv {{ inst.install_dir }} {{ inst.install_dir }}.bak.{{ ansible_date_time.epoch }}
+      ansible.builtin.command: mv {{ inst.install_dir }} {{ inst.install_dir }}.bak.{{ ansible_facts['date_time'].epoch }}
       when: _install_stat.stat.exists
 
     - name: Dọn backup thư mục cài cũ

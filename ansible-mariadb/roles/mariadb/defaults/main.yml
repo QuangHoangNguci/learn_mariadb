@@ -93,7 +93,7 @@ mariadb_remove_os_mariadb: false
 
 # --- Gói OS offline ---
 # Thư mục gói offline (trong package/) cần cài; thêm os-jammy / os-el7 tùy OS
-mariadb_os_package_subdirs: "{{ ['os'] + (['os-jammy'] if (ansible_distribution_release | default('')) == 'jammy' else []) + (['os-el7'] if ansible_os_family == 'RedHat' and ansible_distribution_major_version == '7' else []) }}"
+mariadb_os_package_subdirs: "{{ ['os'] + (['os-jammy'] if (ansible_facts['distribution_release'] | default('')) == 'jammy' else []) + (['os-el7'] if ansible_facts['os_family'] == 'RedHat' and ansible_facts['distribution_major_version'] == '7' else []) }}"
 # Gói không cài để tránh xung đột với MySQL/MariaDB sẵn có
 mariadb_os_package_skip_regex: 'mysql-common|mariadb-common|libmariadb3'
 mariadb_os_package_stage_dir: /tmp/mariadb_os_pkgs
