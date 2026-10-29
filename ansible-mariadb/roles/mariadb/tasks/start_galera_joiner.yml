@@ -3,9 +3,9 @@
 - name: Chờ node cluster sẵn sàng nhận kết nối Galera
   vars:
     _boots: "{{ groups['mariadb_bootstrap'] | default([]) }}"
-    # Node bootstrap (lấy IP từ ansible_host); chưa có bootstrap thì dùng node khác trong cluster
+    # Node bootstrap (IP từ ansible_host hoặc facts); chưa có bootstrap thì dùng node khác trong cluster
     _peer: >-
-      {{ (hostvars[_boots[0]].ansible_host | default(_boots[0]))
+      {{ (hostvars[_boots[0]].ansible_host | default((hostvars[_boots[0]].ansible_facts | default({})).get('default_ipv4', {}).get('address', _boots[0])))
          if _boots | length > 0 else (mariadb_cluster_nodes | difference([mariadb_node_ip]) | first) }}
   ansible.builtin.wait_for:
     host: "{{ _peer }}"

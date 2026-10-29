@@ -4,6 +4,6 @@ all:
       children:
         mariadb:
           hosts:
-            mariadb-node1:
-            mariadb-node2:
-            mariadb-node3:
+            mariadb-node1: { ansible_host: 172.24.220.161 }
+            mariadb-node2: { ansible_host: 172.24.220.244 }
+            mariadb-node3: { ansible_host: 172.24.220.65 }
