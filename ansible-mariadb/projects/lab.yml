@@ -1,0 +1,19 @@
+---
+# Ghi đè cấu hình cho lab 3 node, mỗi node 2 vCPU / 4GB RAM.
+# Dùng: ansible-playbook projects/install_mariadb.yml -e @projects/lab.yml
+# Extra-vars ưu tiên hơn group_vars/mariadb.yml, nên chỉ cần khai báo phần khác biệt.
+
+mariadb_topology: cluster
+
+# Buffer pool cố định 2GB (auto sẽ là ~75% RAM = ~2.9GB, chừa quá ít cho OS + connection + Galera)
+mariadb_buf_mb: 2048
+mariadb_max_connections: 200
+
+# gcache là file trên đĩa, mặc định 2048M là quá lớn cho lab
+mariadb_gcache_size: 512M
+
+# Chỉ để tham khảo tuning
+mariadb_size_gb: 20
+mariadb_max_open_files: 65535
+
+mariadb_expected_cluster_size: 3

@@ -14,6 +14,20 @@ Chạy trong thư mục `ansible-mariadb/`.
 - `../setup/mariadb/Install_Mariadb/vsystem.sql` và `users.sql`: chỉ cần khi `mariadb_empty_cluster: false`.
 - Để ở chỗ khác thì đặt `mariadb_package_dir` và `mariadb_setup_sql_dir` (đường dẫn tuyệt đối) trong group_vars.
 
+**Tải bản cài về máy bastion.** Tarball MariaDB và MaxScale không nằm trong git mà ở GitHub Release `packages-v1`. Các file còn lại (`nodejs/`, `os/`, `os-jammy/`, `os-el7/`) đã có sẵn khi clone. Trên bastion (cần ra được github.com):
+
+```bash
+git clone https://github.com/QuangHoangNguci/learn_mariadb.git
+cd learn_mariadb
+./download_packages.sh                 # tải mariadb + maxscale vào package/mariadb, package/maxscale
+./download_packages.sh maxscale        # hoặc chỉ tải một gói
+```
+
+- Script đọc URL từ `package/<tên>/link-to-download.txt` và in trạng thái từng file (`THÀNH CÔNG` / `BỎ QUA` / `THẤT BẠI`) kèm bảng tổng kết cuối. Thoát với mã lỗi khác 0 nếu có file thất bại.
+- File đã có thì bỏ qua. Tải đứt giữa chừng thì chạy lại, script tải tiếp từ file `.part`.
+- Kiểm tra sau khi tải: `ls -lh package/mariadb package/maxscale`.
+- Bastion không ra được internet: tải file trên máy khác rồi `scp` vào đúng `package/mariadb/` và `package/maxscale/`.
+
 **2. Khai báo node** trong [projects/inventory/databases.yaml](projects/inventory/databases.yaml). Tên host phải là IP của node. Node đầu tiên là bootstrap, các node sau là joiner.
 
 **3. Sửa cấu hình** trong [projects/inventory/group_vars/mariadb.yml](projects/inventory/group_vars/mariadb.yml). Bắt buộc đổi:
@@ -45,6 +59,39 @@ ansible-playbook projects/install_mariadb.yml -e mariadb_install_maxscale=true -
 ```
 
 Tags: `os`, `install`, `config`, `service`, `datadir`, `init`, `start`, `maxscale`, `vector`.
+
+### Chạy lab (3 node, 2 vCPU / 4GB RAM)
+
+Cấu hình mặc định nhắm vào server lớn (buffer pool = 75% RAM, `max_connections` theo RAM, gcache 2GB). Với lab, truyền thêm [projects/lab.yml](projects/lab.yml) để ghi đè: buffer pool 2GB, `max_connections` 200, gcache 512M.
+
+```bash
+# 1. Tải bản cài về bastion (xem phần Chuẩn bị ở trên)
+cd .. && ./download_packages.sh && cd ansible-mariadb
+
+# 2. Sửa projects/inventory/databases.yaml thành 3 IP của lab, kiểm tra SSH
+ansible mariadb -m ping
+
+# 3. Kiểm tra cú pháp, rồi cài
+ansible-playbook projects/install_mariadb.yml -e @projects/lab.yml --syntax-check
+ansible-playbook projects/install_mariadb.yml -e @projects/lab.yml
+
+# Kèm MaxScale (RAM chung node nên giảm buffer pool xuống 1536MB)
+ansible-playbook projects/install_mariadb.yml -e @projects/lab.yml \
+  -e mariadb_install_maxscale=true -e mariadb_buf_mb=1536
+```
+
+Kiểm tra sau khi cài, trên node bất kỳ:
+
+```bash
+mariadb -e "show status like 'wsrep_cluster_size'; show status like 'wsrep_local_state_comment';"
+# kỳ vọng: wsrep_cluster_size = 3, state = Synced
+```
+
+Lưu ý cho lab:
+- Mỗi node nên có 1–2GB swap để tránh OOM-killer khi SST.
+- Dư tối thiểu vài GB đĩa dưới `/u01` (gcache + redo log + binlog + dữ liệu).
+- Cài lại từ đầu trên node đã cài: dừng service (`systemctl stop mariadb`) và xóa `mariadb_data_dir`, nếu không chế độ `fresh` sẽ từ chối hoặc giữ dữ liệu cũ.
+- Mật khẩu và `mariadb_mgmt_nodes` vẫn lấy từ group_vars/mariadb.yml, đổi ở đó nếu cần.
 
 ## Luồng chạy
 

@@ -4,6 +4,6 @@ all:
       children:
         mariadb:
           hosts:
-            10.211.60.102:
-            10.211.60.103:
-            10.211.60.104:
+            mariadb-node1:
+            mariadb-node2:
+            mariadb-node3:
