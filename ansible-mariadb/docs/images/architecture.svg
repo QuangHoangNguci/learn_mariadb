@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 680" width="960" height="680" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+  </defs>
+  <rect width="960" height="680" fill="#ffffff"/>
+
+  <!-- Client + VIP -->
+  <rect x="380" y="20" width="200" height="50" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="480" y="51" text-anchor="middle" font-weight="bold" fill="#0f172a">Ứng dụng / Client</text>
+  <line x1="480" y1="70" x2="480" y2="100" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="290" y="100" width="380" height="50" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="480" y="121" text-anchor="middle" fill="#0f172a">VIP / DNS / danh sách host (tùy chọn)</text>
+  <text x="480" y="139" text-anchor="middle" font-size="12" fill="#475569">role chưa cấu hình keepalived, xem mục HA</text>
+
+  <!-- VIP -> MaxScale -->
+  <line x1="480" y1="150" x2="220" y2="213" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="480" y1="150" x2="480" y2="213" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="480" y1="150" x2="740" y2="213" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="682" y="122" font-size="12" fill="#1d4ed8">→ MaxScale: 4006 (RW)</text>
+  <text x="682" y="140" font-size="12" fill="#1d4ed8">→ MaxScale: 4016 (RO)</text>
+
+  <!-- Node frames -->
+  <rect x="110" y="190" width="220" height="405" rx="10" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="370" y="190" width="220" height="405" rx="10" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="630" y="190" width="220" height="405" rx="10" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="220" y="580" text-anchor="middle" font-weight="bold" fill="#0f172a">Node 1 (bootstrap)</text>
+  <text x="480" y="580" text-anchor="middle" font-weight="bold" fill="#0f172a">Node 2 (joiner)</text>
+  <text x="740" y="580" text-anchor="middle" font-weight="bold" fill="#0f172a">Node 3 (joiner)</text>
+
+  <!-- MaxScale -->
+  <g>
+    <rect x="130" y="215" width="180" height="60" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="220" y="240" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+    <text x="220" y="260" text-anchor="middle" font-size="11" fill="#1e3a8a">readwritesplit · readconnroute</text>
+    <rect x="390" y="215" width="180" height="60" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="480" y="240" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+    <text x="480" y="260" text-anchor="middle" font-size="11" fill="#1e3a8a">readwritesplit · readconnroute</text>
+    <rect x="650" y="215" width="180" height="60" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="740" y="240" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+    <text x="740" y="260" text-anchor="middle" font-size="11" fill="#1e3a8a">readwritesplit · readconnroute</text>
+  </g>
+
+  <!-- Mesh MaxScale -> MariaDB (every MaxScale sees all 3 nodes) -->
+  <g stroke="#94a3b8" stroke-width="1" fill="none">
+    <line x1="220" y1="275" x2="480" y2="400"/>
+    <line x1="220" y1="275" x2="740" y2="400"/>
+    <line x1="480" y1="275" x2="220" y2="400"/>
+    <line x1="480" y1="275" x2="740" y2="400"/>
+    <line x1="740" y1="275" x2="220" y2="400"/>
+    <line x1="740" y1="275" x2="480" y2="400"/>
+  </g>
+  <g stroke="#475569" stroke-width="2">
+    <line x1="220" y1="275" x2="220" y2="398" marker-end="url(#ar)"/>
+    <line x1="480" y1="275" x2="480" y2="398" marker-end="url(#ar)"/>
+    <line x1="740" y1="275" x2="740" y2="398" marker-end="url(#ar)"/>
+  </g>
+  <rect x="385" y="327" width="190" height="22" rx="4" fill="#ffffff"/>
+  <text x="480" y="343" text-anchor="middle" font-size="12" fill="#334155">3306: mỗi MaxScale thấy cả 3 node</text>
+
+  <!-- MariaDB -->
+  <g>
+    <rect x="130" y="400" width="180" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="220" y="430" text-anchor="middle" font-weight="bold" fill="#14532d">MariaDB + Galera</text>
+    <text x="220" y="450" text-anchor="middle" font-size="11" fill="#14532d">master · đọc/ghi · :3306</text>
+    <rect x="390" y="400" width="180" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="480" y="430" text-anchor="middle" font-weight="bold" fill="#14532d">MariaDB + Galera</text>
+    <text x="480" y="450" text-anchor="middle" font-size="11" fill="#14532d">master · đọc/ghi · :3306</text>
+    <rect x="650" y="400" width="180" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="740" y="430" text-anchor="middle" font-weight="bold" fill="#14532d">MariaDB + Galera</text>
+    <text x="740" y="450" text-anchor="middle" font-size="11" fill="#14532d">master · đọc/ghi · :3306</text>
+  </g>
+
+  <!-- Galera band -->
+  <g stroke="#b45309" stroke-width="2">
+    <line x1="220" y1="470" x2="220" y2="515" marker-start="url(#ag)" marker-end="url(#ag)"/>
+    <line x1="480" y1="470" x2="480" y2="515" marker-start="url(#ag)" marker-end="url(#ag)"/>
+    <line x1="740" y1="470" x2="740" y2="515" marker-start="url(#ag)" marker-end="url(#ag)"/>
+  </g>
+  <rect x="120" y="515" width="720" height="40" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/>
+  <text x="480" y="540" text-anchor="middle" font-weight="bold" fill="#78350f">Galera Cluster: đồng bộ ghi (certification), cả 3 node đều là master</text>
+
+  <!-- Legend -->
+  <text x="480" y="632" text-anchor="middle" font-size="12" fill="#475569">Cổng: client→MaxScale 4006 (RW) / 4016 (RO) · MaxScale→MariaDB 3306 · Galera 1031 SST / 1032 group / 1033 IST · extra_port 1301</text>
+  <text x="480" y="652" text-anchor="middle" font-size="12" fill="#475569">Đường đậm: MaxScale gọi MariaDB cùng node · đường mảnh: gọi MariaDB các node còn lại</text>
+</svg>

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+  <rect width="960" height="520" fill="#ffffff"/>
+
+  <!-- Panel titles -->
+  <text x="245" y="30" text-anchor="middle" font-weight="bold" font-size="16" fill="#0f172a">Bình thường (3/3 node)</text>
+  <text x="715" y="30" text-anchor="middle" font-weight="bold" font-size="16" fill="#0f172a">Node 1 chết (2/3 node)</text>
+  <line x1="480" y1="45" x2="480" y2="500" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+
+  <!-- LEFT -->
+  <rect x="145" y="70" width="200" height="50" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="245" y="100" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+  <line x1="245" y1="120" x2="90" y2="298" stroke="#dc2626" stroke-width="3" marker-end="url(#aw)"/>
+  <line x1="245" y1="120" x2="245" y2="298" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+  <line x1="245" y1="120" x2="400" y2="298" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+  <text x="130" y="200" font-size="13" font-weight="bold" fill="#dc2626">W</text>
+  <text x="255" y="200" font-size="13" font-weight="bold" fill="#2563eb">R</text>
+  <text x="345" y="200" font-size="13" font-weight="bold" fill="#2563eb">R</text>
+
+  <rect x="30" y="300" width="120" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5"/>
+  <text x="90" y="328" text-anchor="middle" font-weight="bold" fill="#14532d">Node 1</text>
+  <text x="90" y="350" text-anchor="middle" font-size="12" fill="#14532d">Master (ghi)</text>
+  <rect x="185" y="300" width="120" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="245" y="328" text-anchor="middle" font-weight="bold" fill="#14532d">Node 2</text>
+  <text x="245" y="350" text-anchor="middle" font-size="12" fill="#14532d">Slave (đọc)</text>
+  <rect x="340" y="300" width="120" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="400" y="328" text-anchor="middle" font-weight="bold" fill="#14532d">Node 3</text>
+  <text x="400" y="350" text-anchor="middle" font-size="12" fill="#14532d">Slave (đọc)</text>
+
+  <!-- RIGHT -->
+  <rect x="615" y="70" width="200" height="50" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="715" y="100" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+  <line x1="715" y1="120" x2="715" y2="298" stroke="#dc2626" stroke-width="3" marker-end="url(#aw)"/>
+  <line x1="715" y1="120" x2="870" y2="298" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+  <text x="725" y="200" font-size="13" font-weight="bold" fill="#dc2626">W</text>
+  <text x="815" y="200" font-size="13" font-weight="bold" fill="#2563eb">R</text>
+
+  <rect x="500" y="300" width="120" height="70" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="560" y="328" text-anchor="middle" font-weight="bold" fill="#64748b">Node 1</text>
+  <text x="560" y="350" text-anchor="middle" font-size="12" fill="#64748b">không phản hồi</text>
+  <text x="602" y="324" text-anchor="middle" font-size="22" font-weight="bold" fill="#dc2626">✕</text>
+  <rect x="655" y="300" width="120" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5"/>
+  <text x="715" y="328" text-anchor="middle" font-weight="bold" fill="#14532d">Node 2</text>
+  <text x="715" y="350" text-anchor="middle" font-size="12" fill="#14532d">Master mới (ghi)</text>
+  <rect x="810" y="300" width="120" height="70" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="870" y="328" text-anchor="middle" font-weight="bold" fill="#14532d">Node 3</text>
+  <text x="870" y="350" text-anchor="middle" font-size="12" fill="#14532d">Slave (đọc)</text>
+
+  <!-- Captions -->
+  <text x="245" y="405" text-anchor="middle" font-size="13" fill="#334155">Quorum 3/3, cluster Primary.</text>
+  <text x="245" y="425" text-anchor="middle" font-size="13" fill="#334155">W = ghi (dồn về 1 Master), R = đọc.</text>
+  <text x="715" y="405" text-anchor="middle" font-size="13" fill="#334155">Còn 2/3 node: vẫn đủ quorum, cluster vẫn Primary.</text>
+  <text x="715" y="425" text-anchor="middle" font-size="13" fill="#334155">MaxScale phát hiện sau ≤ 2s (monitor_interval)</text>
+  <text x="715" y="445" text-anchor="middle" font-size="13" fill="#334155">và chọn Master mới. Node 1 hồi phục sẽ rejoin</text>
+  <text x="715" y="465" text-anchor="middle" font-size="13" fill="#334155">làm Slave (disable_master_failback=1).</text>
+</svg>

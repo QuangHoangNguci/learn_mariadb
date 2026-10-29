@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+  </defs>
+  <rect width="960" height="560" fill="#ffffff"/>
+
+  <!-- Participants -->
+  <rect x="25" y="20" width="130" height="40" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="90" y="45" text-anchor="middle" font-weight="bold">Client</text>
+  <rect x="215" y="20" width="130" height="40" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="280" y="45" text-anchor="middle" font-weight="bold" fill="#1e3a8a">MaxScale</text>
+  <rect x="415" y="20" width="130" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="480" y="45" text-anchor="middle" font-weight="bold" fill="#14532d">Node 1 (Master)</text>
+  <rect x="615" y="20" width="130" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="680" y="45" text-anchor="middle" font-weight="bold" fill="#14532d">Node 2</text>
+  <rect x="795" y="20" width="130" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="860" y="45" text-anchor="middle" font-weight="bold" fill="#14532d">Node 3</text>
+
+  <!-- Lifelines -->
+  <g stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4">
+    <line x1="90" y1="60" x2="90" y2="530"/>
+    <line x1="280" y1="60" x2="280" y2="530"/>
+    <line x1="480" y1="60" x2="480" y2="530"/>
+    <line x1="680" y1="60" x2="680" y2="530"/>
+    <line x1="860" y1="60" x2="860" y2="530"/>
+  </g>
+
+  <!-- 1 -->
+  <line x1="90" y1="105" x2="278" y2="105" stroke="#475569" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="100" y="95" font-size="13">1. INSERT / UPDATE (cổng 4006)</text>
+  <!-- 2 -->
+  <line x1="280" y1="155" x2="478" y2="155" stroke="#475569" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="290" y="145" font-size="13">2. chuyển tới node Master</text>
+  <!-- 3 -->
+  <rect x="385" y="180" width="190" height="34" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="480" y="201" text-anchor="middle" font-size="13">3. COMMIT → tạo writeset</text>
+  <!-- 4 -->
+  <line x1="480" y1="250" x2="678" y2="250" stroke="#b45309" stroke-width="1.8" marker-end="url(#ao)"/>
+  <line x1="480" y1="272" x2="858" y2="272" stroke="#b45309" stroke-width="1.8" marker-end="url(#ao)"/>
+  <text x="490" y="240" font-size="13" fill="#78350f">4. phát writeset tới 2 node còn lại (wsrep :1032)</text>
+  <!-- 5 -->
+  <rect x="415" y="300" width="130" height="30" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="480" y="320" text-anchor="middle" font-size="13">5. certify</text>
+  <rect x="615" y="300" width="130" height="30" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="680" y="320" text-anchor="middle" font-size="13">5. certify</text>
+  <rect x="795" y="300" width="130" height="30" rx="6" fill="#fef3c7" stroke="#f59e0b"/>
+  <text x="860" y="320" text-anchor="middle" font-size="13">5. certify</text>
+  <text x="40" y="318" font-size="12" fill="#475569">Mỗi node tự kiểm tra xung đột,</text>
+  <text x="40" y="335" font-size="12" fill="#475569">kết quả giống hệt nhau.</text>
+  <!-- 6 -->
+  <line x1="478" y1="385" x2="282" y2="385" stroke="#475569" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+  <text x="300" y="375" font-size="13">6. OK (qua certification)</text>
+  <!-- 7 -->
+  <line x1="278" y1="430" x2="92" y2="430" stroke="#475569" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+  <text x="100" y="420" font-size="13">7. OK</text>
+  <!-- note -->
+  <rect x="405" y="455" width="520" height="72" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="418" y="477" font-size="13" fill="#0f172a">Node 2 và 3 áp dụng (apply) writeset ngay sau đó, không chặn client.</text>
+  <text x="418" y="497" font-size="13" fill="#0f172a">Nếu certify báo xung đột (hai node sửa cùng dòng) thì giao dịch đến sau</text>
+  <text x="418" y="515" font-size="13" fill="#0f172a">bị rollback với lỗi "Deadlock found".</text>
+</svg>
