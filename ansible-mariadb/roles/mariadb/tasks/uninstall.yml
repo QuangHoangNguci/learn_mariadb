@@ -1,0 +1,117 @@
+---
+# Gỡ sạch những gì role đã cài trên node để cài lại từ đầu (lab/test).
+# KHÔNG nằm trong main.yml, chỉ chạy qua projects/uninstall_mariadb.yml (tasks_from: uninstall).
+# XÓA DỮ LIỆU: data/log/binlog/thư mục cài/config/unit systemd đều bị xóa, không khôi phục được.
+# Không gỡ: gói OS đã cài (jemalloc, numactl, libssl1.1...), rule iptables (cài lại vẫn idempotent), MaxScale, Vector.
+
+# Cần inst (đường dẫn, tên service, user) giống lúc cài
+- name: Tính thông số instance
+  ansible.builtin.include_tasks: common.yml
+
+# Chặn xóa nhầm khi biến đường dẫn rỗng hoặc trỏ vào thư mục hệ thống
+- name: Kiểm tra đường dẫn an toàn trước khi xóa
+  vars:
+    _paths: "{{ [inst.install_dir, inst.data_dir, inst.tmp_dir, inst.log_dir, inst.binlog_dir, inst.conf_file] }}"
+    _protected: [/, /etc, /usr, /usr/local, /var, /var/lib, /var/log, /home, /root, /boot, /opt, /tmp, /u01, /data, /mnt]
+  ansible.builtin.assert:
+    that:
+      - inst.user | length > 0
+      - inst.service | length > 0
+      - _paths | select('match', '^/[^/]+(/[^/]+)+$') | list | length == _paths | length
+      - _paths | intersect(_protected) | length == 0
+    fail_msg: "Đường dẫn không an toàn để xóa: {{ _paths }}"
+
+# --- 1. Dừng service và tiến trình còn sót ---
+- name: Dừng và tắt service MariaDB
+  ansible.builtin.systemd:
+    name: "{{ inst.service }}"
+    state: stopped
+    enabled: false
+  failed_when: false
+
+# mariadbd tạm của init (safe-mode) hoặc tiến trình treo
+- name: Kill tiến trình còn sót của user MariaDB
+  ansible.builtin.command: pkill -9 -u {{ inst.user }}
+  register: _pkill
+  changed_when: _pkill.rc == 0
+  failed_when: false
+
+# --- 2. Gom backup do role tạo ---
+- name: Tìm backup thư mục cài (.bak.*)
+  ansible.builtin.find:
+    paths: "{{ inst.install_dir | dirname }}"
+    patterns: "{{ inst.install_dir | basename }}.bak.*"
+    file_type: directory
+    recurse: false
+  register: _bk_install
+
+- name: Tìm backup my.cnf, unit
+  ansible.builtin.find:
+    paths: "{{ item.dir }}"
+    patterns: "{{ item.patterns }}"
+    file_type: any
+    recurse: false
+  loop:
+    - { dir: "{{ inst.conf_file | dirname }}", patterns: ["{{ inst.conf_file | basename }}.*~", "{{ inst.conf_file | basename }}.new"] }
+    - { dir: /etc/systemd/system, patterns: ["{{ inst.service }}.service.*~"] }
+  loop_control:
+    label: "{{ item.dir }}"
+  register: _bk_conf
+
+# --- 3. Xóa file/thư mục ---
+- name: Xóa binary, dữ liệu, log, config, unit, wrapper
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ [inst.install_dir, inst.data_dir, inst.tmp_dir, inst.log_dir, inst.binlog_dir, inst.run_dir, inst.conf_file,
+        '/etc/systemd/system/' ~ inst.service ~ '.service',
+        '/etc/logrotate.d/' ~ inst.service,
+        '/etc/profile.d/mariadb.sh', '/usr/local/bin/mariadb',
+        mariadb_os_package_stage_dir]
+       + (_bk_install.files | map(attribute='path') | list)
+       + (_bk_conf.results | map(attribute='files') | flatten | map(attribute='path') | list) }}
+  loop_control:
+    label: "{{ item }}"
+
+# --- 4. Tuning OS do role ghi (sysctl, limits, THP) ---
+- name: Gỡ tuning OS
+  when: mariadb_uninstall_os_tuning | bool
+  block:
+    - name: Tắt service disable-thp
+      ansible.builtin.systemd:
+        name: disable-thp.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Xóa file sysctl, limits, unit disable-thp
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/sysctl.d/99-mariadb-tuning.conf
+        - /etc/security/limits.d/99-mariadb.conf
+        - /etc/systemd/system/disable-thp.service
+
+# --- 5. User và group ---
+- name: Xóa user và group MariaDB
+  when: mariadb_uninstall_users | bool
+  block:
+    - name: Xóa user
+      ansible.builtin.user:
+        name: "{{ inst.user }}"
+        state: absent
+
+    - name: Xóa group đọc log
+      ansible.builtin.group:
+        name: "{{ mariadb_log_group }}"
+        state: absent
+
+- name: Nạp lại systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Kết quả gỡ cài đặt
+  ansible.builtin.debug:
+    msg: "Đã gỡ MariaDB trên {{ mariadb_node_ip }}. Sysctl đã nạp trong kernel chỉ mất sau reboot. Gói OS và rule iptables được giữ lại."

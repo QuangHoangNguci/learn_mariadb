@@ -1,0 +1,31 @@
+---
+# Gỡ sạch MariaDB trên các node để cài lại (lab/test). KHÔNG dùng cho production, XÓA TOÀN BỘ DỮ LIỆU.
+# Chạy từ thư mục ansible-mariadb/ (truyền cùng -e với lúc cài để đường dẫn khớp):
+#   ansible-playbook projects/uninstall_mariadb.yml -e @projects/lab.yml
+#   thêm -e mariadb_assume_yes=true để bỏ qua bước hỏi xác nhận
+#   -e mariadb_uninstall_os_tuning=false  giữ sysctl/limits/THP
+#   -e mariadb_uninstall_users=false      giữ user + group mariadb
+#   --limit <host>                        chỉ gỡ một node
+- name: Gỡ MariaDB khỏi các node
+  hosts: mariadb
+  become: true
+  gather_facts: true
+  gather_subset: [hardware]
+  pre_tasks:
+    - name: Xác nhận xóa toàn bộ dữ liệu
+      ansible.builtin.pause:
+        prompt: "SẼ XÓA TOÀN BỘ MariaDB (binary, data, log, config) trên: {{ ansible_play_hosts | join(', ') }}. Gõ 'yes' để tiếp tục, Ctrl+C để hủy"
+      register: _confirm
+      run_once: true
+      when: not (mariadb_assume_yes | bool)
+
+    - name: Dừng nếu không xác nhận
+      ansible.builtin.assert:
+        that: (mariadb_assume_yes | bool) or (_confirm.user_input | default('') | lower) == 'yes'
+        fail_msg: "Chưa xác nhận 'yes', hủy gỡ cài đặt."
+      run_once: true
+  tasks:
+    - name: Gỡ MariaDB
+      ansible.builtin.include_role:
+        name: mariadb
+        tasks_from: uninstall

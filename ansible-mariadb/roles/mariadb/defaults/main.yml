@@ -90,6 +90,9 @@ mariadb_dns_ip: ""
 mariadb_mgmt_nodes: []
 # true: dừng/gỡ MariaDB/MySQL mặc định của OS khi cài fresh
 mariadb_remove_os_mariadb: false
+# Gỡ cài đặt (projects/uninstall_mariadb.yml): có xóa tuning OS (sysctl/limits/THP) và user/group không
+mariadb_uninstall_os_tuning: true
+mariadb_uninstall_users: true
 
 # --- Gói OS offline ---
 # Thư mục gói offline (trong package/) cần cài; thêm os-jammy / os-el7 tùy OS

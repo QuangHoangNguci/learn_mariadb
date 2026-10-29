@@ -2,7 +2,7 @@
 # Cài jemalloc, numactl, iptables từ gói offline.
 # Chỉ copy + cài khi node còn thiếu (hoặc mariadb_os_packages_force=true).
 - name: Cài gói offline khi còn thiếu
-  when: mariadb_os_packages_force or mariadb_missing_deps | length > 0
+  when: mariadb_os_packages_force or (mariadb_missing_deps | difference(['libssl1.1'])) | length > 0
   block:
     # Lấy gói offline theo OS
     - name: Liệt kê gói trên controller
@@ -46,6 +46,39 @@
       when: ansible_facts['os_family'] == 'RedHat' and _os_pkg_files | length > 0
 
     - name: Phát hiện lại phụ thuộc sau khi cài
+      ansible.builtin.include_tasks: libs.yml
+
+# libgalera_smm.so của tarball cần libssl.so.1.1, Ubuntu 22.04+ không có sẵn. Chỉ cài riêng gói libssl1.1 (trong os-jammy,
+# dùng được trên 22.04 và 24.04), không cài cả thư mục để tránh hạ cấp numactl/libnuma của OS.
+- name: Cài libssl1.1 cho Galera khi còn thiếu
+  when: "'libssl1.1' in mariadb_missing_deps"
+  block:
+    - name: Tìm gói libssl1.1 trên controller
+      ansible.builtin.set_fact:
+        _libssl_deb: "{{ query('ansible.builtin.fileglob', mariadb_package_dir ~ '/os-jammy/libssl1.1_*.deb') | first | default('') }}"
+
+    - name: Báo lỗi nếu thiếu file libssl1.1
+      ansible.builtin.assert:
+        that: _libssl_deb | length > 0
+        fail_msg: "Thiếu {{ mariadb_package_dir }}/os-jammy/libssl1.1_*.deb (Galera cần libssl.so.1.1)"
+
+    - name: Tạo thư mục tạm chứa gói
+      ansible.builtin.file:
+        path: "{{ mariadb_os_package_stage_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy libssl1.1 lên node
+      ansible.builtin.copy:
+        src: "{{ _libssl_deb }}"
+        dest: "{{ mariadb_os_package_stage_dir }}/{{ _libssl_deb | basename }}"
+        mode: "0644"
+
+    - name: Cài libssl1.1
+      ansible.builtin.command: dpkg -i --skip-same-version {{ mariadb_os_package_stage_dir }}/{{ _libssl_deb | basename }}
+      changed_when: true
+
+    - name: Phát hiện lại phụ thuộc sau khi cài libssl1.1
       ansible.builtin.include_tasks: libs.yml
 
 # Dừng khi vẫn thiếu gói thiết yếu (dù vừa cài hay đã có sẵn)

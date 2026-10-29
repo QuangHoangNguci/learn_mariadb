@@ -1,5 +1,5 @@
 ---
-# Phát hiện jemalloc / numactl / iptables. Kết quả:
+# Phát hiện jemalloc / numactl / iptables (và libssl1.1 cho Galera trên Debian/Ubuntu). Kết quả:
 #   mariadb_jemalloc_path  đường dẫn libjemalloc (rỗng nếu thiếu)
 #   mariadb_missing_deps   danh sách gói còn thiếu
 - name: Liệt kê thư viện đã đăng ký
@@ -19,4 +19,6 @@
     mariadb_jemalloc_path: "{{ _ldconfig.stdout_lines | select('search', 'libjemalloc[.]so') | map('regex_replace', '^.*=> ', '') | list | first | default('') }}"
     mariadb_missing_deps: >-
       {{ ([] if (_ldconfig.stdout_lines | select('search', 'libjemalloc[.]so') | list | length > 0) else ['jemalloc'])
-         + (_bins.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list) }}
+         + (_bins.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list)
+         + ([] if (not mariadb_galera_enabled or ansible_facts['os_family'] != 'Debian'
+                   or (_ldconfig.stdout_lines | select('search', 'libssl[.]so[.]1[.]1') | list | length > 0)) else ['libssl1.1']) }}
