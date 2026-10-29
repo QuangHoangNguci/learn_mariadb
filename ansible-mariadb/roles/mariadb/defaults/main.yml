@@ -17,8 +17,14 @@ mariadb_assume_yes: false
 
 # Nhóm inventory chứa các node; tên host phải là IP của node
 mariadb_cluster_group: mariadb
-mariadb_cluster_nodes: "{{ groups[mariadb_cluster_group] }}"
-mariadb_node_ip: "{{ inventory_hostname }}"
+# IP lấy từ ansible_host, không có thì dùng tên host (tên host = IP). Cho phép đặt alias kiểu mariadb-node1.
+mariadb_cluster_nodes: >-
+  {%- set r = [] -%}
+  {%- for h in groups[mariadb_cluster_group] -%}
+  {%- set _ = r.append(hostvars[h].ansible_host | default(h)) -%}
+  {%- endfor -%}
+  {{ r }}
+mariadb_node_ip: "{{ ansible_host | default(inventory_hostname) }}"
 # Node đầu tiên trong inventory là bootstrap, các node sau là joiner
 mariadb_node_role: "{{ 'bootstrap' if inventory_hostname == groups[mariadb_cluster_group][0] else 'joiner' }}"
 # IP primary để mở iptables (bắt buộc với dr / dr-cluster)
