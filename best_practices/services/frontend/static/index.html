@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bảng điều khiển cụm MariaDB</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Cụm MariaDB Galera: dữ liệu trực tiếp</h1>
+      <p class="sub">Frontend đọc từ reader service, reader đọc qua MaxScale (3 node)</p>
+    </div>
+    <div class="controls">
+      <span id="status" class="pill pill-wait">đang kết nối…</span>
+      <label class="ctl"><input type="checkbox" id="auto" checked> Tự làm mới</label>
+      <label class="ctl">mỗi
+        <select id="interval">
+          <option value="2000">2 giây</option>
+          <option value="3000" selected>3 giây</option>
+          <option value="5000">5 giây</option>
+          <option value="10000">10 giây</option>
+        </select>
+      </label>
+      <button id="refresh" type="button">Làm mới</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main>
+    <section class="cards" aria-label="Số liệu tổng quan">
+      <div class="card"><span class="label">Tỉnh / thành (dữ liệu mẫu)</span><strong id="c-provinces">–</strong></div>
+      <div class="card"><span class="label">Phường / xã (dữ liệu mẫu)</span><strong id="c-wards">–</strong></div>
+      <div class="card accent"><span class="label">Bản ghi live (do writer ghi)</span><strong id="c-live">–</strong></div>
+      <div class="card accent"><span class="label">Ghi trong 1 phút qua</span><strong id="c-rate">–</strong><small id="c-rate-sub"></small></div>
+      <div class="card"><span class="label">Lần ghi cuối</span><strong id="c-last" class="small">–</strong></div>
+      <div class="card"><span class="label">Node vừa trả lời đọc</span><strong id="c-node" class="small">–</strong><small id="c-via"></small></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Số bản ghi ghi vào mỗi phút</h2>
+        <label class="ctl">Khoảng
+          <select id="minutes">
+            <option value="15">15 phút</option>
+            <option value="30" selected>30 phút</option>
+            <option value="60">60 phút</option>
+            <option value="180">3 giờ</option>
+          </select>
+        </label>
+      </div>
+      <div id="chart" class="chart" role="img" aria-label="Biểu đồ số bản ghi mỗi phút"></div>
+    </section>
+
+    <div class="two">
+      <section class="panel">
+        <h2>Node đã nhận ghi</h2>
+        <p class="hint">Cột <code>writer_node</code>: hostname của node MariaDB nhận lệnh ghi (Master theo MaxScale).</p>
+        <div id="by-node" class="bars"></div>
+      </section>
+      <section class="panel">
+        <h2>Top tỉnh theo số bản ghi live</h2>
+        <div id="by-province" class="bars"></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Bản ghi mới nhất</h2>
+        <label class="ctl">Tỉnh
+          <select id="live-province"><option value="">Tất cả</option></select>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Thời gian ghi</th><th>Mã</th><th>Phường / xã</th><th>Tỉnh / thành</th><th>Mã bưu chính</th><th>Node ghi</th></tr></thead>
+          <tbody id="live-body"><tr><td colspan="6" class="empty">Đang tải…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Tra cứu phường / xã (dữ liệu mẫu)</h2>
+        <div class="search">
+          <input id="q" type="search" placeholder="Nhập tên, ví dụ: Ba Đình" autocomplete="off">
+          <select id="ref-province"><option value="">Tất cả tỉnh</option></select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mã</th><th>Phường / xã</th><th>Tỉnh / thành</th><th>Mã bưu chính</th></tr></thead>
+          <tbody id="ref-body"><tr><td colspan="4" class="empty">Đang tải…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="more"><button id="ref-more" type="button" hidden>Tải thêm</button></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="foot">Reader: …</span>
+    <span id="updated"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

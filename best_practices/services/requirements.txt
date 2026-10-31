@@ -1,0 +1,2 @@
+# Chỉ writer_service.py và reader_service.py cần thư viện này. frontend_server.py chỉ dùng thư viện chuẩn.
+PyMySQL>=1.1,<2

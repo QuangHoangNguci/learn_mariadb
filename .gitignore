@@ -16,3 +16,11 @@
 package/mariadb/*.tar.gz
 package/maxscale/*.tar.gz
 package/maxscale/*.deb
+
+# Services mô phỏng tải (best_practices/services): cấu hình thật, môi trường ảo, log, pid
+best_practices/services/.env
+best_practices/services/.venv/
+best_practices/services/run/
+best_practices/services/logs/
+__pycache__/
+*.pyc
