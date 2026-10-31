@@ -281,7 +281,7 @@ mariadb -h <ip-maxscale> -P 4006 -u tdht -p      # qua MaxScale: 4006 read-write
 mariadb -h 172.24.220.161 -P 1301 -u root -p     # extra_port 1301: vào được khi đã hết max_connections
 ```
 
-User do `users.sql` tạo: `root@localhost` và `tdht` (mật khẩu `mariadb_admin_pass`), `monitor` (`mariadb_common_pass`), user SST của Galera và `maxscale`. `tdht` và `monitor` chỉ được tạo cho `localhost`, `127.0.0.1`, `10.%`, `192.168.%`, nên mạng khác (ví dụ lab `172.24.%`) không đăng nhập từ xa được. Dùng root qua socket, hoặc tạo user mới:
+User do `users.sql` tạo: `root@localhost` và `tdht` (mật khẩu `mariadb_admin_pass`), `monitor` (`mariadb_common_pass`), user SST của Galera và `maxscale`. `tdht`, `monitor` và `maxscale` được tạo cho `localhost`, `127.0.0.1`, `10.%`, `192.168.%` và `172.%`. Các user còn lại (`galera`, `mbackup`, `mysqlexp`, `auto_add_partition`) chỉ cho `localhost` / `127.0.0.1`. Với mạng khác các dải trên (hoặc cluster đã cài bằng `users.sql` cũ) không đăng nhập từ xa được. Dùng root qua socket, hoặc tạo user mới:
 
 ```sql
 CREATE USER 'app'@'172.24.%' IDENTIFIED BY 'MatKhau#123';
@@ -379,6 +379,79 @@ sudo systemctl start mariadb
 ```
 
 Chỉ làm khi hiểu rõ trạng thái cluster. Bootstrap nhầm node cũ sẽ làm mất giao dịch mới nhất. Nếu cluster còn ít nhất một node chạy thì chỉ cần `systemctl start mariadb` trên node đã tắt.
+
+### Tương tác với cụm qua MaxScale
+
+Áp dụng khi đã cài MaxScale (`-e mariadb_install_maxscale=true`, cổng `mariadb_max_rw_port` / `mariadb_max_ro_port`, mặc định trong group_vars là 4006 / 4016). Role cài MaxScale trên **mỗi node**, nên dùng IP của bất kỳ node nào làm `<ip-maxscale>`. Tên các thành phần trong `/etc/maxscale.cnf`: server `server_1..3` (theo thứ tự trong inventory), monitor `Galera-Monitor`, dịch vụ `Read-Write-Service` / `Read-Only-Service`, listener `Read-Write-Listener` / `Read-Only-Listener`.
+
+**Kết nối dữ liệu qua MaxScale** (user phải được phép đăng nhập từ IP của máy client, xem mục user ở trên):
+
+```bash
+mariadb -h <ip-maxscale> -P 4006 -u tdht -p      # đọc/ghi, MaxScale tự tách đọc và ghi
+mariadb -h <ip-maxscale> -P 4016 -u tdht -p      # chỉ đọc, chia kết nối giữa các node Synced
+```
+
+Kiểm tra truy vấn đang vào node nào:
+
+```bash
+# Cổng ghi: lệnh ghi luôn về node Master
+mariadb -h <ip-maxscale> -P 4006 -u tdht -p -e "SELECT @@hostname, @@server_id, @@wsrep_node_name;"
+
+# Cổng đọc: mỗi kết nối mới có thể sang node khác, chạy nhiều lần để thấy chia đều
+for i in 1 2 3 4 5 6; do
+  mariadb -h <ip-maxscale> -P 4016 -u tdht -p'<mật khẩu>' -Nse "SELECT @@hostname"
+done
+```
+
+**Quản trị MaxScale bằng `maxctrl`** (chạy trên node). Role tạo wrapper `/usr/local/bin/maxctrl` tự trỏ vào REST API `127.0.0.1:8990` (`mariadb_maxscale_rest_port`). User REST **chỉ có `admin`** (không dùng được user MariaDB như `tdht`). Role đổi mật khẩu `admin` từ mặc định `mariadb` thành `mariadb_maxscale_pass` khi cài. Nếu cài bằng bản role cũ thì mật khẩu vẫn là `mariadb`, đổi bằng: `maxctrl -u admin -p mariadb alter user admin '<mariadb_maxscale_pass>'`.
+
+```bash
+maxctrl -u admin -p '<mật khẩu>' list servers        # trạng thái từng node: Master/Slave, Synced, Running
+maxctrl -u admin -p '<mật khẩu>' list services       # dịch vụ, số kết nối
+maxctrl -u admin -p '<mật khẩu>' list listeners      # cổng 4006 / 4016
+maxctrl -u admin -p '<mật khẩu>' list monitors       # Galera-Monitor đang theo dõi những node nào
+maxctrl -u admin -p '<mật khẩu>' list sessions       # kết nối client đang mở
+maxctrl -u admin -p '<mật khẩu>' show server server_1
+maxctrl -u admin -p '<mật khẩu>' show monitor Galera-Monitor
+maxctrl -u admin -p '<mật khẩu>' show service Read-Write-Service
+maxctrl -u admin -p '<mật khẩu>' show maxscale       # phiên bản, uptime, cấu hình chung
+```
+
+Cột `State` trong `list servers` thường gặp: `Master, Synced, Running` (node nhận ghi), `Slave, Synced, Running` (node đọc), `Running` hoặc `Down` (node không dùng được). Dùng `watch -n1 "maxctrl -u admin -p '<mật khẩu>' list servers"` để theo dõi khi test failover.
+
+**Đưa node ra khỏi tuyến (bảo trì)**
+
+```bash
+maxctrl -u admin -p '<mật khẩu>' set server server_2 drain          # ngừng nhận kết nối mới, kết nối cũ chạy xong thì thôi
+maxctrl -u admin -p '<mật khẩu>' set server server_2 maintenance    # ngừng định tuyến tới node này
+maxctrl -u admin -p '<mật khẩu>' clear server server_2 maintenance  # đưa node trở lại
+```
+
+Chế độ bảo trì chỉ đổi định tuyến của MaxScale trên node đang gọi lệnh, không dừng MariaDB. Vì mỗi node có một MaxScale độc lập, muốn áp dụng toàn cụm thì chạy lệnh trên cả 3 node (có thể dùng `ansible mariadb -b -m shell -a "maxctrl -u admin -p '<mật khẩu>' set server server_2 maintenance"`).
+
+**Thử failover**
+
+```bash
+# 1. Xem node nào đang là Master
+maxctrl -u admin -p '<mật khẩu>' list servers
+# 2. Dừng MariaDB trên node Master đó
+sudo systemctl stop mariadb
+# 3. Sau khoảng 2 giây, trên node khác: Master mới được chọn, node cũ báo Down
+maxctrl -u admin -p '<mật khẩu>' list servers
+# 4. Bật lại node cũ: nó rejoin làm Slave, không giành lại Master
+sudo systemctl start mariadb
+```
+
+**Service, log, cấu hình MaxScale**
+
+```bash
+sudo systemctl status maxscale --no-pager
+sudo systemctl restart maxscale
+sudo tail -n 80 /var/log/maxscale/maxscale.log
+cat /etc/maxscale.cnf                                # cấu hình do role sinh ra
+```
+
+Nếu `list servers` hiện `Down` mà MariaDB vẫn chạy, thường do user `maxscale` không đăng nhập được từ IP của node (users.sql chỉ tạo cho `10.%`, `192.168.%` và `172.%`; cluster cài từ bản `users.sql` cũ chưa có `172.%`, cần `CREATE USER` bổ sung), hoặc thiếu cổng 3306 giữa các node. Xem `maxscale.log` để biết lỗi xác thực.
 
 ## 5. Gỡ cài đặt (để cài lại)
 

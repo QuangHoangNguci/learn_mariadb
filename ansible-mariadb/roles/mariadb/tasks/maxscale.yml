@@ -290,12 +290,24 @@
         port: "{{ mariadb_maxscale_rest_port | int }}"
         timeout: 60
 
-    # Mật khẩu admin REST dùng chung mariadb_maxscale_pass
-    - name: Tạo admin user cho REST API
+    # Mật khẩu admin REST dùng chung mariadb_maxscale_pass.
+    # MaxScale có sẵn admin/mariadb nên phải ĐỔI mật khẩu, không tạo mới (create user báo Duplicate và giữ mật khẩu mặc định).
+    # Đã đúng mật khẩu cấu hình (chạy lại) thì bỏ qua.
+    - name: Kiểm tra đăng nhập REST bằng mật khẩu cấu hình
       ansible.builtin.command: >-
         {{ _ms_ctrl }} -h 127.0.0.1:{{ mariadb_maxscale_rest_port }}
-        create user admin {{ inst.maxscale_pass | quote }} --type=admin
-      register: _ms_admin
-      changed_when: _ms_admin.rc == 0
-      failed_when: _ms_admin.rc != 0 and 'Duplicate username' not in (_ms_admin.stdout ~ _ms_admin.stderr)
+        -u admin -p {{ inst.maxscale_pass | quote }} list users
+      register: _ms_auth
+      changed_when: false
+      failed_when: false
       no_log: true
+
+    - name: Đổi mật khẩu admin REST từ mật khẩu mặc định
+      ansible.builtin.command: >-
+        {{ _ms_ctrl }} -h 127.0.0.1:{{ mariadb_maxscale_rest_port }}
+        -u admin -p mariadb alter user admin {{ inst.maxscale_pass | quote }}
+      register: _ms_admin
+      changed_when: true
+      failed_when: _ms_admin.rc != 0
+      no_log: true
+      when: _ms_auth.rc != 0
